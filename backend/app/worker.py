@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from .core import engine, Vulnerability
 
 log = logging.getLogger(__name__)
-SOURCES = ("avd","chaitin","nox","oscs","threatbook","seebug","struts2","kev","venustech")
+
 _lock = threading.Lock()
 
 def matches(item, valuable, black_keywords=(), white_keywords=()):
@@ -72,7 +72,7 @@ def collect_once(adapters, config, notify):
     if not _lock.acquire(blocking=False):
         raise RuntimeError("collection already running")
     try:
-        for source in config.get("sources", SOURCES):
+        for source in config.get("sources", []):
             adapter=adapters.get(source)
             if adapter is None:
                 log.warning("Source %s not implemented; refusing to substitute a different feed",source)
