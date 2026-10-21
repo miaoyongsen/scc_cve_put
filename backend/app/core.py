@@ -29,7 +29,8 @@ class Vulnerability(Base):
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 Base.metadata.create_all(engine)
-app = FastAPI(title="SCC CVE Push", version="0.1.0")
+from .scheduler import lifespan
+app = FastAPI(title="SCC CVE Push", version="0.1.0", lifespan=lifespan)
 
 def auth(authorization: Optional[str] = Header(None)):
     expected = os.getenv("API_TOKEN")
@@ -69,3 +70,6 @@ def refresh():
 # Editable intelligence source settings
 from .settings import router as sources_router
 app.include_router(sources_router)
+
+from .credentials import router as credentials_router
+app.include_router(credentials_router)
