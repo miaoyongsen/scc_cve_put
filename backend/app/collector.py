@@ -16,6 +16,7 @@ import xml.etree.ElementTree as ET
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from .credentials import SourceCredential
 from .core import engine
 from .settings import IntelSource
 from .worker import matches, upsert
@@ -36,12 +37,14 @@ def validate_url(url):
             raise ValueError("Private or reserved IP address not allowed")
     return url
 
-def read_feed(url):
+def read_feed(url, api_key="", header_name="Authorization"):
     validate_url(url)
     # Redirects disabled; source URL is validated before any request.
     # For public exposure, enforce egress firewall rules as well.
     with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
-        response=client.get(url,headers={"User-Agent":"SCC-CVE/0.1","Accept":"application/rss+xml, application/atom+xml, application/xml"})
+        headers={"User-Agent":"SCC-CVE/0.1","Accept":"application/rss+xml, application/atom+xml, application/xml"}
+        if api_key: headers[header_name]=api_key
+        response=client.get(url,headers=headers)
         response.raise_for_status()
         if len(response.content)>2_000_000: raise ValueError("Feed too large")
     root=ET.fromstring(response.content)
@@ -72,15 +75,19 @@ def read_feed(url):
 def collect_configured_sources():
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[]}
     with Session(engine) as db:
-        sources=[(s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
-    for name,adapter,notes in sources:
+        sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
+    for source_id,name,adapter,notes in sources:
         summary["sources"]+=1
         if adapter != "rss":
             summary["errors"].append(f"{name}: unsupported adapter {adapter!r}")
             continue
         try:
             # notes holds feed URL for RSS adapters.
-            for item in read_feed(notes):
+            with Session(engine) as db:
+                credential=db.get(SourceCredential,source_id)
+                key=credential.api_key if credential else ""
+                header=credential.header_name if credential else "Authorization"
+            for item in read_feed(notes,key,header):
                 summary["items"]+=1
                 item["from"]=name
                 # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
