@@ -4,6 +4,6 @@ import {ref} from 'vue'
 import {useRouter} from 'vue-router'
 const value=ref('')
 const router=useRouter()
-function enter(){if(value.value){sessionStorage.setItem('access_key',value.value);router.push('/vulnerabilities')}}
+function enter(){if(value.value){localStorage.setItem('token',value.value);router.push('/vulnerabilities')}}
 </script>
 <style scoped>main{max-width:500px;margin:20vh auto;text-align:center}input,button{padding:10px;margin:8px}</style>
