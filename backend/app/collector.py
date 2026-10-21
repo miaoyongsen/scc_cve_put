@@ -91,8 +91,9 @@ def collect_configured_sources():
                     notify=upsert(db,item,True)
                 if notify:
                     try:
-                        send_vulnerability(item)
-                        summary["notifications"]+=1
+                        result=send_vulnerability(item)
+                        if result and any(result.values()):
+                            summary["notifications"]+=1
                     except Exception:
                         log.exception("Notification failed for %s",item["key"])
                         summary["errors"].append(f"{name}: notification failed")
