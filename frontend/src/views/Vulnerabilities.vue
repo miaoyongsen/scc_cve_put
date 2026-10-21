@@ -1,0 +1,18 @@
+<template><div class="shell"><header><strong>SCC CVE</strong><nav>漏洞监控</nav><n-button quaternary @click="logout">退出</n-button></header><main><div class="head"><div><h2>漏洞监控</h2><n-text depth="3">WatchVuln 多源高价值漏洞情报</n-text></div><n-button type="primary" :loading="refreshing" @click="refreshNow">立即采集</n-button></div><n-space style="margin:20px 0"><n-input v-model:value="q" clearable placeholder="搜索标题 / CVE" @keyup.enter="load"/><n-select v-model:value="severity" clearable placeholder="严重程度" style="width:130px" :options="options" @update:value="load"/><n-input v-model:value="source" clearable placeholder="来源" @keyup.enter="load"/><n-button @click="load">查询</n-button><n-text depth="3">共 {{total}} 条</n-text></n-space><n-data-table remote striped :columns="columns" :data="rows" :loading="loading" :pagination="pagination" @update:page="changePage"/><n-modal v-model:show="show" preset="card" :title="selected?.title||'漏洞详情'" style="width:min(850px,95vw)"><n-descriptions v-if="selected" bordered :column="2"><n-descriptions-item label="CVE">{{selected.cve||'--'}}</n-descriptions-item><n-descriptions-item label="严重程度">{{selected.severity}}</n-descriptions-item><n-descriptions-item label="来源">{{selected.from}}</n-descriptions-item><n-descriptions-item label="披露日期">{{selected.disclosure}}</n-descriptions-item><n-descriptions-item label="描述" :span="2">{{selected.description}}</n-descriptions-item><n-descriptions-item label="修复建议" :span="2">{{selected.solutions}}</n-descriptions-item></n-descriptions></n-modal></main></div></template>
+<script setup>
+import{h,ref,reactive,onMounted}from'vue'
+import{useRouter}from'vue-router'
+import{useMessage,NButton,NDataTable,NInput,NSelect,NSpace,NText,NTag,NModal,NDescriptions,NDescriptionsItem}from'naive-ui'
+import{list,detail,refresh}from'../api'
+const router=useRouter(),msg=useMessage(),rows=ref([]),total=ref(0),loading=ref(false),refreshing=ref(false),page=ref(1),q=ref(''),severity=ref(null),source=ref(''),show=ref(false),selected=ref(null)
+const options=['严重','高危','中危','低危'].map(v=>({label:v,value:v}))
+const pagination=reactive({page:1,pageSize:20,itemCount:0})
+const columns=[{title:'等级',key:'severity',width:90,render:r=>h(NTag,{type:r.severity==='严重'?'error':'warning'},()=>r.severity||'--')},{title:'漏洞标题',key:'title',minWidth:300,render:r=>h(NButton,{text:true,type:'primary',onClick:()=>open(r.id)},()=>r.title)},{title:'CVE',key:'cve',width:160},{title:'来源',key:'from',width:120},{title:'披露日期',key:'disclosure',width:130}]
+async function load(){loading.value=true;try{const r=await list({page:page.value,size:20,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
+async function open(id){try{selected.value=(await detail(id)).data;show.value=true}catch(e){msg.error(e.message)}}
+async function refreshNow(){refreshing.value=true;try{await refresh();await load();msg.success('采集完成')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{refreshing.value=false}}
+function changePage(p){page.value=p;pagination.page=p;load()}
+function logout(){localStorage.removeItem('token');router.push('/login')}
+onMounted(load)
+</script>
+<style scoped>.shell{min-height:100vh;background:#f5f7fa;color:#243447}header{height:64px;background:#fff;display:flex;align-items:center;gap:36px;padding:0 32px;border-bottom:1px solid #eee}header strong{color:#2080f0;font-size:20px}header nav{flex:1}main{max-width:1400px;margin:32px auto;background:#fff;padding:30px;border-radius:10px}.head{display:flex;justify-content:space-between;align-items:center}.head h2{margin:0}</style>
