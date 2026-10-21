@@ -63,7 +63,8 @@ def get_vulnerability(vuln_id:int):
 
 @app.post("/api/v1/vulnerabilities/refresh", dependencies=[Depends(auth)])
 def refresh():
-    raise HTTPException(503,"WatchVuln Python provider adapters not yet implemented; collection disabled to avoid inaccurate results.")
+    from .collector import collect_configured_sources
+    return {"code":0,"data":collect_configured_sources(),"message":"completed"}
 
 # Editable intelligence source settings
 from .settings import router as sources_router
