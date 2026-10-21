@@ -1,0 +1,22 @@
+[Unit]
+Description=SCC CVE Python API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=scccve
+Group=scccve
+WorkingDirectory=/opt/scc-cve/backend
+EnvironmentFile=/etc/scc-cve/scc-cve.env
+ExecStart=/opt/scc-cve/backend/.venv/bin/uvicorn app.core:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/scc-cve
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
