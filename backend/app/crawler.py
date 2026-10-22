@@ -1,9 +1,10 @@
-"""Independent crawler script editor, Docker sandbox execution and JSON v1 ingestion.
+"""Independent crawler script editor, host Python subprocess execution and JSON v1 ingestion.
 RSS code and configuration are intentionally untouched.
 """
 import json
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -70,17 +71,12 @@ def validate_item(item,index):
     return result
 
 def run_script(code):
-    # Never execute uploaded code in the API process or on the host.
-    # Docker daemon must be installed and accessible to the backend service.\n    # Deployments must enforce outbound firewall restrictions on Docker bridge\n    # to block internal/private addresses; Docker isolation alone is insufficient.
-    command=["docker","run","--rm","-i","--network","bridge","--read-only",
-             "--cap-drop","ALL","--security-opt","no-new-privileges",
-             "--pids-limit","64","--memory","128m","--cpus","0.5",
-             "--user","65534:65534","--tmpfs","/tmp:rw,noexec,nosuid,size=8m",
-             "python:3.9-alpine","python","-I","-c",code]
+    # Runs with the same OS permissions as the backend service; trusted admins only.
+    command=[sys.executable,"-c",code]
     try:
         proc=subprocess.run(command,input="",text=True,capture_output=True,timeout=35)
     except FileNotFoundError:
-        raise HTTPException(503,"服务器未安装 Docker，禁止直接在主机执行上传脚本")
+        raise HTTPException(503,"服务器 Python 解释器不可用")
     except subprocess.TimeoutExpired:
         raise HTTPException(408,"爬虫执行超过35秒")
     if len(proc.stdout)>2_000_000 or len(proc.stderr)>100_000:
