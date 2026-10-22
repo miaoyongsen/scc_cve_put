@@ -8,6 +8,21 @@ from .collector import read_feed
 
 router = APIRouter(prefix="/api/v1/source-check", dependencies=[Depends(auth)])
 
+@router.post("/all")
+def check_all_sources():
+    """Test every configured RSS source, including disabled sources."""
+    from sqlalchemy import select
+    with Session(engine) as db:
+        ids=[s.id for s in db.scalars(select(IntelSource).order_by(IntelSource.id)).all()]
+    results=[]
+    for source_id in ids:
+        try:
+            response=check_source(source_id)
+            results.append({"id":source_id,"ok":response["data"]["ok"],"count":response["data"]["count"],"message":response["message"]})
+        except Exception as exc:
+            results.append({"id":source_id,"ok":False,"count":0,"message":str(exc)[:180]})
+    return {"code":0,"data":results,"message":"completed"}
+
 @router.post("/{source_id}")
 def check_source(source_id: int):
     with Session(engine) as db:
@@ -29,17 +44,3 @@ def check_source(source_id: int):
             "samples": [{"title": x["title"], "cve": x["cve"]} for x in items[:3]]},
             "message": "RSS parsed successfully; no records saved or notifications sent"}
 
-@router.post("/all")
-def check_all_sources():
-    """Test every configured RSS source, including disabled sources."""
-    from sqlalchemy import select
-    with Session(engine) as db:
-        ids=[s.id for s in db.scalars(select(IntelSource).order_by(IntelSource.id)).all()]
-    results=[]
-    for source_id in ids:
-        try:
-            response=check_source(source_id)
-            results.append({"id":source_id,"ok":response["data"]["ok"],"count":response["data"]["count"],"message":response["message"]})
-        except Exception as exc:
-            results.append({"id":source_id,"ok":False,"count":0,"message":str(exc)[:180]})
-    return {"code":0,"data":results,"message":"completed"}
