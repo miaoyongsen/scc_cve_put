@@ -10,6 +10,7 @@ class CollectionConfig(Base):
     __tablename__="collection_config"
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
     interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
+    allowed_severities: Mapped[str]=mapped_column(String(200),default='严重,高危,中危,低危,未知',nullable=False)
     review_keywords: Mapped[str]=mapped_column(String(3000),default='',nullable=False)
     lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
     whitelist: Mapped[str]=mapped_column(String(2000),default='',nullable=False)
@@ -27,6 +28,15 @@ if 'lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('coll
 if 'review_keywords' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE collection_config ADD COLUMN review_keywords VARCHAR(3000) NOT NULL DEFAULT ''"))
+
+if 'allowed_severities' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE collection_config ADD COLUMN allowed_severities VARCHAR(200) NOT NULL DEFAULT '严重,高危,中危,低危,未知'"))
+
+def allowed_severities():
+    with Session(engine) as db:
+        row=db.get(CollectionConfig,1)
+        return (row.allowed_severities if row else '严重,高危,中危,低危,未知').split(',') if row else ['严重','高危','中危','低危','未知']
 
 def review_keywords():
     with Session(engine) as db:
@@ -54,11 +64,12 @@ class CollectionInput(BaseModel):
     whitelist: str=Field(default='',max_length=2000)
     lookback_hours: int=Field(default=24)
     review_keywords: str=Field(default='',max_length=3000)
+    allowed_severities: list[str]=Field(default_factory=lambda:['严重','高危','中危','低危','未知'])
 
 @router.get("")
 def get_collection():
     with Session(engine) as db:
-        return {"code":0,"data":{"interval_minutes":interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else "")},"message":"success"}
+        return {"code":0,"data":{"interval_minutes":interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
 
 @router.put("")
 def set_collection(body:CollectionInput):
@@ -67,6 +78,8 @@ def set_collection(body:CollectionInput):
         raise HTTPException(422,'Unsupported time range')
     if body.interval_minutes not in ALLOWED_INTERVALS:
         raise HTTPException(422,"Unsupported interval")
+    if len(body.allowed_severities)!=len(set(body.allowed_severities)) or any(x not in ("严重","高危","中危","低危","未知") for x in body.allowed_severities):
+        raise HTTPException(422,"Invalid severity selection")
     with Session(engine) as db:
         row=db.get(CollectionConfig,1)
         if row is None:
@@ -76,6 +89,7 @@ def set_collection(body:CollectionInput):
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
         row.review_keywords=body.review_keywords
+        row.allowed_severities=','.join(body.allowed_severities)
         db.commit()
     from .scheduler import wakeup
     wakeup()
