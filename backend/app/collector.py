@@ -4,6 +4,7 @@ Supported adapter: RSS/Atom (explicit opt-in). This is NOT a replacement for
 the original WatchVuln provider-specific IsValuable logic.
 """
 import hashlib
+import html
 import ipaddress
 import json
 import logging
@@ -26,6 +27,30 @@ from .legacy_notify import send_vulnerability
 
 log = logging.getLogger(__name__)
 CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
+
+HTML_TAG = re.compile(r"<[^>]+>")
+SPACE = re.compile(r"\\s+")
+SEVERITY_PATTERNS = (
+    ("严重", re.compile(r"(?i)(?:\\bcritical\\b|\\bCRITICAL\\b|严重|超危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*(?:9(?:\\.\\d+)?|10(?:\\.0+)?)(?!\\d))")),
+    ("高危", re.compile(r"(?i)(?:\\bhigh\\b|高危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[78](?:\\.\\d+)?(?!\\d))")),
+    ("中危", re.compile(r"(?i)(?:\\bmedium\\b|\\bmoderate\\b|中危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[456](?:\\.\\d+)?(?!\\d))")),
+    ("低危", re.compile(r"(?i)(?:\\blow\\b|低危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[0-3](?:\\.\\d+)?(?!\\d))")),
+)
+def clean_text(value):
+    value=html.unescape(value or "")
+    value=HTML_TAG.sub(" ",value)
+    return SPACE.sub(" ",value).strip()
+
+def extract_severity(title, description, entry):
+    # Prefer explicit RSS category/severity metadata; descriptions may mention
+    # unrelated vulnerabilities with different severity levels.
+    metadata=" ".join(clean_text(e.text) for e in entry.iter()
+                      if e.tag.rsplit("}",1)[-1].lower() in ("category","severity","cvss_score","cvss"))
+    for part in (metadata, title, description[:500]):
+        for level,pattern in SEVERITY_PATTERNS:
+            if pattern.search(part):return level
+    return "未知"
+
 
 def validate_url(url):
     p=urlparse(url)
@@ -62,14 +87,14 @@ def read_feed(url, api_key="", header_name="Authorization"):
             if x is not None and x.text:return x.text.strip()
         return ""
     for e in entries[:100]:
-        title=get_text(e,"title","{http://www.w3.org/2005/Atom}title")
-        description=get_text(e,"description","{http://www.w3.org/2005/Atom}summary","{http://www.w3.org/2005/Atom}content")
+        title=clean_text(get_text(e,"title","{http://www.w3.org/2005/Atom}title"))
+        description=clean_text(get_text(e,"description","{http://www.w3.org/2005/Atom}summary","{http://www.w3.org/2005/Atom}content"))
         guid=get_text(e,"guid","link","{http://www.w3.org/2005/Atom}id")
         disclosure=get_text(e,"pubDate","{http://www.w3.org/2005/Atom}published","{http://www.w3.org/2005/Atom}updated")
         cve=CVE_PATTERN.search(title+" "+description)
         if not title:continue
         yield {"key":hashlib.sha256((url+"|"+(guid or title)).encode()).hexdigest(),
-               "title":title,"description":description,"severity":"",
+               "title":title,"description":description,"severity":extract_severity(title,description,e),
                "cve":cve.group(0).upper() if cve else "",
                "disclosure":disclosure,"tags":[],"references":[guid] if guid else [],
                "solutions":"","reason":[]}
