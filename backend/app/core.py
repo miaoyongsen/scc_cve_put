@@ -3,6 +3,9 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from pathlib import Path
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine, String, Text, Boolean, DateTime, Integer, select, func, or_
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
@@ -75,3 +78,20 @@ app.include_router(credentials_router)
 
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
+
+# Serve compiled Vue UI on the same port as the API.
+UI_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if UI_DIR.is_dir() and (UI_DIR / "index.html").is_file():
+    if (UI_DIR / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=str(UI_DIR / "assets")), name="ui-assets")
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def frontend_index(full_path: str = ""):
+        # Do not turn invalid API requests into HTML pages.
+        if full_path.startswith(("api/", "docs", "redoc", "openapi.json")):
+            raise HTTPException(404, "Not Found")
+        requested = (UI_DIR / full_path).resolve()
+        if requested.is_relative_to(UI_DIR.resolve()) and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(UI_DIR / "index.html")
