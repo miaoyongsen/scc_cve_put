@@ -84,6 +84,26 @@ def related_vulnerabilities(vuln_id:int):
         ).order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc())).all()
         return {"code":0,"data":[serialize(v) for v in rows],"message":"success"}
 
+@app.post("/api/v1/vulnerabilities/enrich-severity", dependencies=[Depends(auth)])
+def enrich_existing_severities():
+    """Best-effort enrichment of up to eight historical unknown CVEs per request."""
+    from .collector import nvd_severity
+    import app.collector as collector
+    collector._nvd_requests=0
+    updated=0
+    with Session(engine) as db:
+        rows=db.scalars(select(Vulnerability).where(
+            or_(Vulnerability.severity=="未知",Vulnerability.severity==""),
+            Vulnerability.cve!=""
+        ).order_by(Vulnerability.first_seen.asc()).limit(8)).all()
+        for row in rows:
+            level=nvd_severity(row.cve)
+            if level!="未知":
+                row.severity=level
+                updated+=1
+        db.commit()
+    return {"code":0,"data":{"checked":len(rows),"updated":updated},"message":"completed"}
+
 class BulkDeleteInput(BaseModel):
     ids: list[int] = Field(..., min_items=1, max_items=100)
 
