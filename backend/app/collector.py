@@ -75,10 +75,14 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "solutions":"","reason":[]}
 
 def collect_configured_sources():
-    from .collection_config import whitelist_keywords, lookback_hours
+    from .collection_config import whitelist_keywords, review_keywords, lookback_hours
+    from .review import Review
+    from .core import Vulnerability
+    from sqlalchemy import select
     hours=lookback_hours()
     cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
     keywords=[x.casefold() for x in whitelist_keywords()]
+    secondary=[x.casefold() for x in review_keywords()]
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
@@ -108,13 +112,23 @@ def collect_configured_sources():
                             continue
                     if published.astimezone(timezone.utc)<cutoff:continue
                 # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
-                if keywords and not any(word in item["title"].casefold() for word in keywords):
-                    continue
+                title=item["title"].casefold()
+                direct=next((word for word in keywords if word in title),None)
+                manual=next((word for word in secondary if word in title),None)
+                if not direct and not manual and (keywords or secondary):continue
                 if not matches(item, True):
                     continue
                 summary["eligible"]+=1
                 with Session(engine) as db:
                     notify=upsert(db,item,True)
+                    vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==item["key"]))
+                    review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
+                    if review:
+                        notify=False
+                    elif manual and not direct:
+                        db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=manual))
+                        db.commit()
+                        notify=False
                 if notify:
                     try:
                         result=send_vulnerability(item)
