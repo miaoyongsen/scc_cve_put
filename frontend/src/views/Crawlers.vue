@@ -1,6 +1,6 @@
 <template>
 <n-card title="Python 爬虫管理（独立于 RSS）" style="margin:24px 0">
-  <n-alert type="info" style="margin-bottom:12px">Python 脚本在 Docker 容器内执行，标准输出必须是 Crawler JSON v1.0。测试运行不入库，点击“采集入库”才保存。脚本执行环境需预装 Docker 和 Python 镜像。</n-alert>
+  <n-alert type="info" style="margin-bottom:12px">Python 脚本直接使用服务器 Python 运行，无需 Docker。仅允许可信管理员编辑脚本；脚本拥有后端服务账号的文件和网络访问权限。标准输出须为 Crawler JSON v1.0。试运行不入库，点击“采集入库”才保存。</n-alert>
   <n-space style="margin-bottom:12px">
     <n-select v-model:value="selectedId" :options="scripts.map(s=>({label:s.name,value:s.id}))" placeholder="选择脚本" style="width:260px" @update:value="choose"/>
     <n-button @click="newScript">新建</n-button>
