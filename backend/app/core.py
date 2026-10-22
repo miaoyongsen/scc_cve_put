@@ -57,6 +57,20 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
         rows=db.scalars(stmt.order_by(Vulnerability.last_seen.desc()).offset((page-1)*size).limit(size)).all()
         return {"code":0,"data":{"list":[serialize(x) for x in rows],"total":total,"page":page,"size":size},"message":"success"}
 
+class BulkDeleteInput(BaseModel):
+    ids: list[int] = Field(..., min_items=1, max_items=100)
+
+@app.post("/api/v1/vulnerabilities/bulk-delete", dependencies=[Depends(auth)])
+def bulk_delete_vulnerabilities(body: BulkDeleteInput):
+    from .review import Review
+    ids=set(body.ids)
+    with Session(engine) as db:
+        from sqlalchemy import delete
+        db.execute(delete(Review).where(Review.vulnerability_id.in_(ids)))
+        result=db.execute(delete(Vulnerability).where(Vulnerability.id.in_(ids)))
+        db.commit()
+        return {"code":0,"data":{"deleted":result.rowcount},"message":"deleted"}
+
 @app.get("/api/v1/vulnerabilities/{vuln_id}", dependencies=[Depends(auth)])
 def get_vulnerability(vuln_id:int):
     with Session(engine) as db:
