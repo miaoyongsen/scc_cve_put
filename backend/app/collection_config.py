@@ -10,6 +10,7 @@ class CollectionConfig(Base):
     __tablename__="collection_config"
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
     interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
+    review_keywords: Mapped[str]=mapped_column(String(3000),default='',nullable=False)
     lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
     whitelist: Mapped[str]=mapped_column(String(2000),default='',nullable=False)
 Base.metadata.create_all(engine)
@@ -22,6 +23,15 @@ if 'whitelist' not in {x['name'] for x in inspect(engine).get_columns('collectio
 if 'lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
         conn.execute(text('ALTER TABLE collection_config ADD COLUMN lookback_hours INTEGER NOT NULL DEFAULT 24'))
+
+if 'review_keywords' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE collection_config ADD COLUMN review_keywords VARCHAR(3000) NOT NULL DEFAULT ''"))
+
+def review_keywords():
+    with Session(engine) as db:
+        row=db.get(CollectionConfig,1)
+        return [x.strip() for x in (row.review_keywords if row else '').split(',') if x.strip()]
 
 def lookback_hours():
     with Session(engine) as db:
@@ -43,11 +53,12 @@ class CollectionInput(BaseModel):
     interval_minutes: int=Field(default=60)
     whitelist: str=Field(default='',max_length=2000)
     lookback_hours: int=Field(default=24)
+    review_keywords: str=Field(default='',max_length=3000)
 
 @router.get("")
 def get_collection():
     with Session(engine) as db:
-        return {"code":0,"data":{"interval_minutes":interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours()},"message":"success"}
+        return {"code":0,"data":{"interval_minutes":interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else "")},"message":"success"}
 
 @router.put("")
 def set_collection(body:CollectionInput):
@@ -64,6 +75,7 @@ def set_collection(body:CollectionInput):
         row.interval_minutes=body.interval_minutes
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
+        row.review_keywords=body.review_keywords
         db.commit()
     from .scheduler import wakeup
     wakeup()
