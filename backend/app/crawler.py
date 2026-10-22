@@ -1,0 +1,163 @@
+"""Independent crawler script editor, Docker sandbox execution and JSON v1 ingestion.
+RSS code and configuration are intentionally untouched.
+"""
+import json
+import re
+import subprocess
+from datetime import datetime, timezone
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+from sqlalchemy import Integer, String, Text, DateTime, select
+from sqlalchemy.orm import Mapped, mapped_column, Session
+from .core import Base, engine, auth
+
+class CrawlerScript(Base):
+    __tablename__="crawler_scripts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    code: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda:datetime.now(timezone.utc))
+
+class CrawlerFinding(Base):
+    __tablename__="crawler_findings"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    script_id: Mapped[int] = mapped_column(Integer, index=True)
+    url: Mapped[str] = mapped_column(Text)
+    cve: Mapped[str] = mapped_column(String(40), index=True, default="")
+    title: Mapped[str] = mapped_column(String(500))
+    severity: Mapped[str] = mapped_column(String(20), default="未知")
+    payload: Mapped[str] = mapped_column(Text)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda:datetime.now(timezone.utc))
+
+Base.metadata.create_all(engine)
+router=APIRouter(prefix="/api/v1/crawlers",dependencies=[Depends(auth)])
+CVE=re.compile(r"^CVE-\\d{4}-\\d{4,}$",re.I)
+LEVELS={"严重","高危","中危","低危","未知"}
+class ScriptInput(BaseModel):
+    name:str=Field(min_length=1,max_length=100)
+    code:str=Field(min_length=1,max_length=100000)
+
+def dto(x):
+    return {"id":x.id,"name":x.name,"code":x.code,"updated_at":x.updated_at}
+
+def validate_item(item,index):
+    if not isinstance(item,dict):raise ValueError(f"items[{index}] 必须为对象")
+    title=item.get("title")
+    url=item.get("url")
+    if not isinstance(title,str) or not title.strip() or len(title)>500:
+        raise ValueError(f"items[{index}].title 必须是非空字符串（最多500字）")
+    from urllib.parse import urlparse
+    if not isinstance(url,str) or len(url)>2000 or urlparse(url).scheme not in ("https","http") or not urlparse(url).hostname:
+        raise ValueError(f"items[{index}].url 必须是有效 HTTP(S) 地址")
+    cve=(item.get("cve") or "").upper()
+    if not isinstance(cve,str) or (cve and not CVE.fullmatch(cve)):
+        raise ValueError(f"items[{index}].cve 格式错误")
+    severity=item.get("severity") or "未知"
+    if severity not in LEVELS:raise ValueError(f"items[{index}].severity 不支持：{severity}")
+    score=item.get("cvss_score")
+    if score is not None and (type(score) not in (float,int) or not 0<=score<=10):
+        raise ValueError(f"items[{index}].cvss_score 必须在0到10之间")
+    for key in ("description","solutions","disclosure"):
+        if key in item and not isinstance(item[key],str):raise ValueError(f"items[{index}].{key} 必须为字符串")
+    if item.get("disclosure"):
+        from datetime import datetime
+        d=datetime.fromisoformat(item["disclosure"].replace("Z","+00:00"))
+        if d.tzinfo is None:raise ValueError(f"items[{index}].disclosure 必须包含时区")
+    if "tags" in item and (not isinstance(item["tags"],list) or not all(isinstance(t,str) for t in item["tags"])):
+        raise ValueError(f"items[{index}].tags 必须为字符串数组")
+    result={**item,"cve":cve,"severity":severity}
+    if len(json.dumps(result,ensure_ascii=False))>30000:raise ValueError(f"items[{index}] 超出大小限制")
+    return result
+
+def run_script(code):
+    # Never execute uploaded code in the API process or on the host.
+    # Docker daemon must be installed and accessible to the backend service.
+    command=["docker","run","--rm","-i","--network","none","--read-only",
+             "--cap-drop","ALL","--security-opt","no-new-privileges",
+             "--pids-limit","64","--memory","128m","--cpus","0.5",
+             "--user","65534:65534","--tmpfs","/tmp:rw,noexec,nosuid,size=8m",
+             "python:3.9-alpine","python","-I","-c",code]
+    try:
+        proc=subprocess.run(command,input="",text=True,capture_output=True,timeout=35)
+    except FileNotFoundError:
+        raise HTTPException(503,"服务器未安装 Docker，禁止直接在主机执行上传脚本")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(408,"爬虫执行超过35秒")
+    if len(proc.stdout)>2_000_000 or len(proc.stderr)>100_000:
+        raise HTTPException(422,"脚本输出超出大小限制")
+    if proc.returncode:
+        raise HTTPException(422,{"stderr":proc.stderr[-3000:],"exit_code":proc.returncode})
+    try:payload=json.loads(proc.stdout)
+    except ValueError:raise HTTPException(422,"stdout 必须仅输出一个 JSON 对象；日志请写入 stderr")
+    if not isinstance(payload,dict) or payload.get("version")!="1.0" or not isinstance(payload.get("items"),list):
+        raise HTTPException(422,"输出必须为 {version:'1.0',items:[...]}")
+    if len(payload["items"])>500:raise HTTPException(422,"单次最多500条")
+    try:items=[validate_item(item,i) for i,item in enumerate(payload["items"])]
+    except (ValueError,TypeError) as exc:raise HTTPException(422,str(exc))
+    return {"items":items,"stderr":proc.stderr[-3000:],"count":len(items)}
+
+@router.get("")
+def list_scripts():
+    with Session(engine) as db:
+        return {"code":0,"data":[dto(x) for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]}
+
+@router.post("")
+def create_script(body:ScriptInput):
+    with Session(engine) as db:
+        if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name)):raise HTTPException(409,"名称已存在")
+        x=CrawlerScript(name=body.name,code=body.code)
+        db.add(x);db.commit();db.refresh(x)
+        return {"code":0,"data":dto(x)}
+
+@router.put("/{script_id}")
+def update_script(script_id:int,body:ScriptInput):
+    with Session(engine) as db:
+        x=db.get(CrawlerScript,script_id)
+        if not x:raise HTTPException(404,"脚本不存在")
+        if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name,CrawlerScript.id!=script_id)):raise HTTPException(409,"名称已存在")
+        x.name=body.name;x.code=body.code;x.updated_at=datetime.now(timezone.utc)
+        db.commit();return {"code":0,"data":dto(x)}
+
+@router.delete("/{script_id}")
+def delete_script(script_id:int):
+    with Session(engine) as db:
+        x=db.get(CrawlerScript,script_id)
+        if not x:raise HTTPException(404,"脚本不存在")
+        db.delete(x);db.commit()
+    return {"code":0,"message":"deleted"}
+
+@router.post("/{script_id}/test")
+def test_script(script_id:int):
+    with Session(engine) as db:
+        x=db.get(CrawlerScript,script_id)
+        if not x:raise HTTPException(404,"脚本不存在")
+        code=x.code
+    return {"code":0,"data":run_script(code)}
+
+@router.post("/{script_id}/collect")
+def collect_script(script_id:int):
+    with Session(engine) as db:
+        x=db.get(CrawlerScript,script_id)
+        if not x:raise HTTPException(404,"脚本不存在")
+        code=x.code
+    result=run_script(code)
+    inserted=0
+    with Session(engine) as db:
+        for item in result["items"]:
+            # Unique within crawler and URL; same CVE across URLs remains separate.
+            old=db.scalar(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id,CrawlerFinding.url==item["url"]))
+            if old:continue
+            db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
+            inserted+=1
+        db.commit()
+    return {"code":0,"data":{"inserted":inserted,"count":result["count"],"stderr":result["stderr"]}}
+
+@router.get("/findings")
+def list_findings():
+    with Session(engine) as db:
+        rows=db.scalars(select(CrawlerFinding).order_by(CrawlerFinding.first_seen.asc(),CrawlerFinding.id.asc())).all()
+        groups={}
+        for row in rows:
+            key=row.cve.upper() if row.cve else "ID-"+str(row.id)
+            groups.setdefault(key,[]).append({"id":row.id,"script_id":row.script_id,"first_seen":row.first_seen,**json.loads(row.payload)})
+        return {"code":0,"data":[{"cve":k if not k.startswith("ID-") else "","count":len(v),"items":v} for k,v in groups.items()]}
