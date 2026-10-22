@@ -100,10 +100,11 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "solutions":"","reason":[]}
 
 def collect_configured_sources():
-    from .collection_config import whitelist_keywords, review_keywords, lookback_hours
+    from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
     from .review import Review
     from .core import Vulnerability
     from sqlalchemy import select
+    permitted=set(allowed_severities())
     hours=lookback_hours()
     cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
     keywords=[x.casefold() for x in whitelist_keywords()]
@@ -125,6 +126,7 @@ def collect_configured_sources():
             for item in read_feed(notes,key,header):
                 summary["items"]+=1
                 item["from"]=name
+                if (item.get("severity") or "未知") not in permitted:continue
                 if cutoff:
                     try:
                         published=parsedate_to_datetime(item["disclosure"])
