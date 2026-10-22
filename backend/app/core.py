@@ -44,7 +44,7 @@ def serialize(v):
     return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
 
 @app.get("/api/v1/vulnerabilities", dependencies=[Depends(auth)])
-def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str=""):
+def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str="",grouped:bool=False):
     page=max(page,1);size=min(max(size,1),100)
     with Session(engine) as db:
         stmt=select(Vulnerability)
@@ -53,9 +53,36 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
         if q:
             like=f"%{q}%"
             stmt=stmt.where(or_(Vulnerability.title.like(like),Vulnerability.cve.like(like),Vulnerability.key.like(like)))
+        if grouped:
+            # Group across the entire filtered result, not merely the current page.
+            # The earliest first_seen record is the parent; CVE-less items stay separate.
+            from sqlalchemy import case
+            group_key=case((Vulnerability.cve!="",func.upper(Vulnerability.cve)),else_=func.concat("ID-",Vulnerability.id)) if engine.dialect.name!="sqlite" else case((Vulnerability.cve!="",func.upper(Vulnerability.cve)),else_=("ID-" + func.cast(Vulnerability.id,String)))
+            ranked=select(
+                Vulnerability.id.label("vid"),
+                func.row_number().over(partition_by=group_key,order_by=(Vulnerability.first_seen.asc(),Vulnerability.id.asc())).label("rn"),
+                func.count().over(partition_by=group_key).label("group_count")
+            )
+            # Apply search filters to the grouping result, keeping all matching sources.
+            ranked=ranked.where(*stmt._where_criteria).subquery()
+            parents=select(Vulnerability,ranked.c.group_count).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
+            total=db.scalar(select(func.count()).select_from(parents.subquery()))
+            records=db.execute(parents.order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc()).offset((page-1)*size).limit(size)).all()
+            return {"code":0,"data":{"list":[{**serialize(v),"group_count":count} for v,count in records],"total":total,"page":page,"size":size},"message":"success"}
         total=db.scalar(select(func.count()).select_from(stmt.subquery()))
         rows=db.scalars(stmt.order_by(Vulnerability.last_seen.desc()).offset((page-1)*size).limit(size)).all()
         return {"code":0,"data":{"list":[serialize(x) for x in rows],"total":total,"page":page,"size":size},"message":"success"}
+
+@app.get("/api/v1/vulnerabilities/{vuln_id}/related", dependencies=[Depends(auth)])
+def related_vulnerabilities(vuln_id:int):
+    with Session(engine) as db:
+        parent=db.get(Vulnerability,vuln_id)
+        if not parent:raise HTTPException(404,"Not found")
+        if not parent.cve:return {"code":0,"data":[],"message":"success"}
+        rows=db.scalars(select(Vulnerability).where(
+            func.upper(Vulnerability.cve)==parent.cve.upper(),Vulnerability.id!=vuln_id
+        ).order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc())).all()
+        return {"code":0,"data":[serialize(v) for v in rows],"message":"success"}
 
 class BulkDeleteInput(BaseModel):
     ids: list[int] = Field(..., min_items=1, max_items=100)
