@@ -1,5 +1,6 @@
 """Persistent manual approval workflow for second-tier CVE intelligence."""
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import Integer, String, DateTime, ForeignKey, select
 from sqlalchemy.orm import Mapped, mapped_column, Session
@@ -12,7 +13,7 @@ class Review(Base):
     vulnerability_id: Mapped[int]=mapped_column(Integer,ForeignKey("vulnerabilities.id"),unique=True,index=True)
     status: Mapped[str]=mapped_column(String(20),default="pending",nullable=False)
     matched_keyword: Mapped[str]=mapped_column(String(200),default="")
-    reviewed_at: Mapped[datetime | None]=mapped_column(DateTime(timezone=True),nullable=True)
+    reviewed_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
 
 Base.metadata.create_all(engine)
 router=APIRouter(prefix="/api/v1/reviews",dependencies=[Depends(auth)])
