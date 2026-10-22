@@ -82,6 +82,9 @@ app.include_router(collection_config_router)
 from .source_check import router as source_check_router
 app.include_router(source_check_router)
 
+from .review import router as review_router
+app.include_router(review_router)
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
