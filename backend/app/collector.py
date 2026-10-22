@@ -10,6 +10,8 @@ import logging
 import os
 import re
 import socket
+from datetime import datetime, timezone, timedelta
+from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
@@ -73,7 +75,9 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "solutions":"","reason":[]}
 
 def collect_configured_sources():
-    from .collection_config import whitelist_keywords
+    from .collection_config import whitelist_keywords, lookback_hours
+    hours=lookback_hours()
+    cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
     keywords=[x.casefold() for x in whitelist_keywords()]
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[]}
     with Session(engine) as db:
@@ -92,6 +96,17 @@ def collect_configured_sources():
             for item in read_feed(notes,key,header):
                 summary["items"]+=1
                 item["from"]=name
+                if cutoff:
+                    try:
+                        published=parsedate_to_datetime(item["disclosure"])
+                        if published.tzinfo is None: published=published.replace(tzinfo=timezone.utc)
+                    except (ValueError,TypeError,IndexError):
+                        try:
+                            published=datetime.fromisoformat(item["disclosure"].replace("Z","+00:00"))
+                            if published.tzinfo is None:published=published.replace(tzinfo=timezone.utc)
+                        except (ValueError,TypeError):
+                            continue
+                    if published.astimezone(timezone.utc)<cutoff:continue
                 # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
                 if keywords and not any(word in item["title"].casefold() for word in keywords):
                     continue
