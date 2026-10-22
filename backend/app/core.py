@@ -76,6 +76,9 @@ app.include_router(sources_router)
 from .credentials import router as credentials_router
 app.include_router(credentials_router)
 
+from .collection_config import router as collection_config_router
+app.include_router(collection_config_router)
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
