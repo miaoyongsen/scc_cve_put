@@ -73,6 +73,8 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "solutions":"","reason":[]}
 
 def collect_configured_sources():
+    from .collection_config import whitelist_keywords
+    keywords=[x.casefold() for x in whitelist_keywords()]
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
@@ -91,6 +93,8 @@ def collect_configured_sources():
                 summary["items"]+=1
                 item["from"]=name
                 # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
+                if keywords and not any(word in item["title"].casefold() for word in keywords):
+                    continue
                 if not matches(item, True):
                     continue
                 summary["eligible"]+=1
