@@ -18,7 +18,8 @@ async function load(){try{rows.value=(await http.get('')).data.data}catch(e){msg
 function newSource(){apiKey.value='';headerName.value='Authorization';editing.value=null;form.value={name:'',adapter:'',notes:'',enabled:false};visible.value=true}
 function edit(r){apiKey.value='';headerName.value='Authorization';editing.value=r.id;form.value={...r};visible.value=true}
 async function save(){try{let id=editing.value;if(id)await http.put('/'+id,form.value);else id=(await http.post('',form.value)).data.data.id;if(apiKey.value)await http.put('/'+id+'/credential',{api_key:apiKey.value,header_name:headerName.value});visible.value=false;await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}}
+async function testSource(r){const x=await http.post(`/../../source-check/${r.id}`);alert(JSON.stringify(x.data))}
 async function remove(r){if(!confirm('确定删除 '+r.name+'？'))return;try{await http.delete('/'+r.id);await load()}catch(e){msg.error(e.message)}}
-const columns=[{title:'来源',key:'name'},{title:'适配器',key:'adapter'},{title:'启用',key:'enabled',render:r=>r.enabled?'是':'否'},{title:'备注',key:'notes'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>edit(r)},()=> '编辑'),h(NButton,{size:'small',type:'error',onClick:()=>remove(r)},()=> '删除')])}]
+const columns=[{title:'来源',key:'name'},{title:'适配器',key:'adapter'},{title:'启用',key:'enabled',render:r=>r.enabled?'是':'否'},{title:'备注',key:'notes'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>testSource(r)},()=> '测试'),h(NButton,{size:'small',onClick:()=>edit(r)},()=> '编辑'),h(NButton,{size:'small',type:'error',onClick:()=>remove(r)},()=> '删除')])}]
 onMounted(()=>{load();loadInterval()})
 </script>
