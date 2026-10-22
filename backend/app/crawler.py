@@ -71,8 +71,8 @@ def validate_item(item,index):
 
 def run_script(code):
     # Never execute uploaded code in the API process or on the host.
-    # Docker daemon must be installed and accessible to the backend service.
-    command=["docker","run","--rm","-i","--network","none","--read-only",
+    # Docker daemon must be installed and accessible to the backend service.\n    # Deployments must enforce outbound firewall restrictions on Docker bridge\n    # to block internal/private addresses; Docker isolation alone is insufficient.
+    command=["docker","run","--rm","-i","--network","bridge","--read-only",
              "--cap-drop","ALL","--security-opt","no-new-privileges",
              "--pids-limit","64","--memory","128m","--cpus","0.5",
              "--user","65534:65534","--tmpfs","/tmp:rw,noexec,nosuid,size=8m",
