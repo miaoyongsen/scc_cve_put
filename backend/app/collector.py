@@ -29,28 +29,68 @@ log = logging.getLogger(__name__)
 CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
 
 HTML_TAG = re.compile(r"<[^>]+>")
-SPACE = re.compile(r"\\s+")
-SEVERITY_PATTERNS = (
-    ("严重", re.compile(r"(?i)(?:\\bcritical\\b|\\bCRITICAL\\b|严重|超危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*(?:9(?:\\.\\d+)?|10(?:\\.0+)?)(?!\\d))")),
-    ("高危", re.compile(r"(?i)(?:\\bhigh\\b|高危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[78](?:\\.\\d+)?(?!\\d))")),
-    ("中危", re.compile(r"(?i)(?:\\bmedium\\b|\\bmoderate\\b|中危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[456](?:\\.\\d+)?(?!\\d))")),
-    ("低危", re.compile(r"(?i)(?:\\blow\\b|低危|CVSS(?:\\s*v[234](?:\\.\\d)?)?\\s*[:=]?\\s*[0-3](?:\\.\\d+)?(?!\\d))")),
-)
+SPACE = re.compile(r"\s+")
+CVSS_SCORE = re.compile(r"(?i)\bCVSS(?:\s*v?[234](?:\.\d)?)?(?:\s*(?:base\s*)?score)?\s*[:=]?\s*(10(?:\.0+)?|[0-9](?:\.\d+)?)\b")
+LEVEL_WORDS = [
+    ("严重", re.compile(r"(?i)\bcritical\b|严重|超危")),
+    ("高危", re.compile(r"(?i)\bhigh\b|高危")),
+    ("中危", re.compile(r"(?i)\bmedium\b|\bmoderate\b|中危")),
+    ("低危", re.compile(r"(?i)\blow\b|低危")),
+]
 def clean_text(value):
     value=html.unescape(value or "")
     value=HTML_TAG.sub(" ",value)
     return SPACE.sub(" ",value).strip()
 
+def severity_from_score(score):
+    try:
+        n=float(score)
+        if 0 <= n <= 10:
+            return "严重" if n>=9 else "高危" if n>=7 else "中危" if n>=4 else "低危"
+    except (ValueError,TypeError):
+        pass
+    return "未知"
+
 def extract_severity(title, description, entry):
-    # Prefer explicit RSS category/severity metadata; descriptions may mention
-    # unrelated vulnerabilities with different severity levels.
+    # Prefer structured metadata over free-form description.
     metadata=" ".join(clean_text(e.text) for e in entry.iter()
-                      if e.tag.rsplit("}",1)[-1].lower() in ("category","severity","cvss_score","cvss"))
-    for part in (metadata, title, description[:500]):
-        for level,pattern in SEVERITY_PATTERNS:
+                      if e.tag.rsplit("}",1)[-1].lower() in ("category","severity","cvss_score","cvss","cvssscore","base_score"))
+    for part in (metadata,title,description[:1000]):
+        score=CVSS_SCORE.search(part)
+        if score:
+            result=severity_from_score(score.group(1))
+            if result!="未知":return result
+        for level,pattern in LEVEL_WORDS:
             if pattern.search(part):return level
     return "未知"
 
+# NVD lookup is best-effort and cached, not required for feed collection.
+_nvd_cache={}
+_nvd_requests=0
+def nvd_severity(cve):
+    global _nvd_requests
+    if not cve:return "未知"
+    if cve in _nvd_cache:return _nvd_cache[cve]
+    # Keep each collection run bounded; the public NVD API is rate-limited.
+    if _nvd_requests>=8:return "未知"
+    _nvd_requests+=1
+    try:
+        response=httpx.get("https://services.nvd.nist.gov/rest/json/cves/2.0",
+                           params={"cveId":cve},timeout=4,follow_redirects=False,trust_env=False)
+        response.raise_for_status()
+        data=response.json().get("vulnerabilities",[])
+        metrics=data[0]["cve"].get("metrics",{}) if data else {}
+        for field in ("cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"):
+            for metric in metrics.get(field,[]):
+                score=metric.get("cvssData",{}).get("baseScore")
+                if score is not None:
+                    result=severity_from_score(score)
+                    _nvd_cache[cve]=result
+                    return result
+    except (httpx.HTTPError,ValueError,KeyError,IndexError) as exc:
+        log.debug("NVD lookup unavailable for %s: %s",cve,exc)
+    _nvd_cache[cve]="未知"
+    return "未知"
 
 def validate_url(url):
     p=urlparse(url)
@@ -104,6 +144,8 @@ def collect_configured_sources():
     from .review import Review
     from .core import Vulnerability
     from sqlalchemy import select
+    global _nvd_requests
+    _nvd_requests=0
     permitted=set(allowed_severities())
     hours=lookback_hours()
     cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
@@ -126,6 +168,8 @@ def collect_configured_sources():
             for item in read_feed(notes,key,header):
                 summary["items"]+=1
                 item["from"]=name
+                if item.get("severity")=="未知" and item.get("cve"):
+                    item["severity"]=nvd_severity(item["cve"])
                 if (item.get("severity") or "未知") not in permitted:continue
                 if cutoff:
                     try:
