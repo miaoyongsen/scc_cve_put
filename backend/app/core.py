@@ -44,8 +44,14 @@ def serialize(v):
     return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
 
 @app.get("/api/v1/vulnerabilities", dependencies=[Depends(auth)])
-def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str="",grouped:bool=False):
-    page=max(page,1);size=min(max(size,1),100)
+def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str="",grouped:bool=False,sort_by:str="disclosure",sort_order:str="desc"):
+    page=max(page,1);size=min(max(size,1),500)
+    sortable={"disclosure":Vulnerability.disclosure,"first_seen":Vulnerability.first_seen,"last_seen":Vulnerability.last_seen,"severity":Vulnerability.severity,"title":Vulnerability.title,"cve":Vulnerability.cve,"source":Vulnerability.source}
+    sort_column=sortable.get(sort_by,Vulnerability.disclosure)
+    sort_order="asc" if sort_order=="asc" else "desc"
+    # SQLite stores disclosure as text; date/time ISO strings can be sorted chronologically.
+    if sort_by=="disclosure":sort_column=func.datetime(Vulnerability.disclosure)
+    ordering=(sort_column.asc() if sort_order=="asc" else sort_column.desc()).nullslast()
     with Session(engine) as db:
         stmt=select(Vulnerability)
         if severity: stmt=stmt.where(Vulnerability.severity==severity)
@@ -67,10 +73,10 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
             ranked=ranked.where(*stmt._where_criteria).subquery()
             parents=select(Vulnerability,ranked.c.group_count).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
             total=db.scalar(select(func.count()).select_from(parents.subquery()))
-            records=db.execute(parents.order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc()).offset((page-1)*size).limit(size)).all()
+            records=db.execute(parents.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
             return {"code":0,"data":{"list":[{**serialize(v),"group_count":count} for v,count in records],"total":total,"page":page,"size":size},"message":"success"}
         total=db.scalar(select(func.count()).select_from(stmt.subquery()))
-        rows=db.scalars(stmt.order_by(Vulnerability.last_seen.desc()).offset((page-1)*size).limit(size)).all()
+        rows=db.scalars(stmt.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
         return {"code":0,"data":{"list":[serialize(x) for x in rows],"total":total,"page":page,"size":size},"message":"success"}
 
 @app.get("/api/v1/vulnerabilities/{vuln_id}/related", dependencies=[Depends(auth)])
