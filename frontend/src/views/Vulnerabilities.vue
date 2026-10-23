@@ -26,7 +26,35 @@ const pagination=reactive({page:1,pageSize:100,itemCount:0,showSizePicker:true,p
 function changePageSize(size){pageSize.value=size;pagination.pageSize=size;page.value=1;pagination.page=1;checkedIds.value=[];load()}
 function changeSorter(sorter){sortBy.value=sorter?.columnKey||"disclosure";sortOrder.value=sorter?.order==="ascend"?"asc":"desc";page.value=1;pagination.page=1;checkedIds.value=[];load()}
 function formatDate(value){if(!value)return '--';let normalized=String(value).trim();if(/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d/.test(normalized)&&!/(Z|[+-]\d\d:?\d\d)$/.test(normalized))normalized=normalized.replace(' ','T')+'Z';let d=new Date(normalized);if(Number.isNaN(d.getTime()))return value;return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
-const columns=[{type:'expand',expandable:r=>(r.group_count||1)>1,renderExpand:r=>related.value[r.id]===null?h('span','正在加载...'):h('div',{style:{padding:'10px 12px'}},[h('div',{style:{marginBottom:'8px',color:'#666'}},'相同 CVE 的其他 '+(related.value[r.id]?.length||0)+' 条情报（按首次采集时间排序）'),h(NDataTable,{size:'small',bordered:true,columns:[{title:'标题',key:'title',minWidth:250,render:x=>h(NButton,{text:true,type:'primary',onClick:()=>open(x.id)},()=>x.title)},{title:'等级',key:'severity',width:90},{title:'来源',key:'from',width:140},{title:'披露时间',key:'disclosure',defaultSortOrder:'descend',width:190,render:x=>formatDate(x.disclosure)},{title:'采集时间',key:'first_seen',width:190,render:x=>formatDate(x.first_seen)},{title:'原始数据',key:'raw',width:100,render:x=>rawButton(x)}],data:related.value[r.id]||[],rowKey:x=>x.id})])},{type:'selection',multiple:true},{title:'等级',key:'severity',sorter:true,width:90,render:r=>h(NTag,{type:r.severity==='严重'?'error':'warning'},()=>r.severity||'未知')},{title:'漏洞标题',key:'title',sorter:true,minWidth:300,render:r=>h(NButton,{text:true,type:'primary',onClick:()=>open(r.id)},()=>h('span',{style:{whiteSpace:'normal',overflowWrap:'anywhere',textAlign:'left',lineHeight:'1.5',display:'inline-block'}},r.title))},{title:'CVE',key:'cve',sorter:true,width:160},{title:'来源',key:'from',sorter:true,width:150,ellipsis:{tooltip:true}},{title:'披露时间',key:'disclosure',sorter:true,defaultSortOrder:'descend',width:185,render:r=>formatDate(r.disclosure)},{title:'采集时间',key:'first_seen',sorter:true,width:185,render:r=>formatDate(r.first_seen)},{title:'原始数据',key:'raw',width:100,render:r=>rawButton(r)}]
+const columns = [
+  {
+    type: 'expand',
+    expandable: row => (row.group_count || 1) > 1,
+    renderExpand: row => {
+      if (related.value[row.id] === null) return h('span', '正在加载...')
+      const relatedColumns = [
+        { title: '标题', key: 'title', minWidth: 250, render: item => h(NButton, { text: true, type: 'primary', onClick: () => open(item.id) }, () => item.title) },
+        { title: '等级', key: 'severity', width: 90 },
+        { title: '来源', key: 'from', width: 140 },
+        { title: '披露时间', key: 'disclosure', width: 190, render: item => formatDate(item.disclosure) },
+        { title: '采集时间', key: 'first_seen', width: 190, render: item => formatDate(item.first_seen) },
+        { title: '原始数据', key: 'raw', width: 100, render: item => rawButton(item) }
+      ]
+      return h('div', { style: { padding: '10px 12px' } }, [
+        h('div', { style: { marginBottom: '8px', color: '#666' } }, '相同 CVE 的其他 ' + (related.value[row.id]?.length || 0) + ' 条情报'),
+        h(NDataTable, { size: 'small', bordered: true, columns: relatedColumns, data: related.value[row.id] || [], rowKey: item => item.id })
+      ])
+    }
+  },
+  { type: 'selection', multiple: true },
+  { title: '等级', key: 'severity', sorter: true, width: 90, render: row => h(NTag, { type: row.severity === '严重' ? 'error' : 'warning' }, () => row.severity || '未知') },
+  { title: '漏洞标题', key: 'title', sorter: true, minWidth: 300, render: row => h(NButton, { text: true, type: 'primary', onClick: () => open(row.id) }, () => h('span', { style: { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left', lineHeight: '1.5', display: 'inline-block' } }, row.title)) },
+  { title: 'CVE', key: 'cve', sorter: true, width: 160 },
+  { title: '来源', key: 'from', sorter: true, width: 150, ellipsis: { tooltip: true } },
+  { title: '披露时间', key: 'disclosure', sorter: true, defaultSortOrder: 'descend', width: 185, render: row => formatDate(row.disclosure) },
+  { title: '采集时间', key: 'first_seen', sorter: true, width: 185, render: row => formatDate(row.first_seen) },
+  { title: '原始数据', key: 'raw', width: 100, render: row => rawButton(row) }
+]
 async function load(){loading.value=true;try{const r=await list({page:page.value,size:pageSize.value,grouped:true,sort_by:sortBy.value,sort_order:sortOrder.value,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;related.value={};total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
 async function open(id){try{selected.value=(await detail(id)).data;show.value=true}catch(e){msg.error(e.message)}}
 async function refreshNow(){refreshing.value=true;try{await refresh();await load();msg.success('采集完成')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{refreshing.value=false}}
