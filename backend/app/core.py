@@ -219,6 +219,9 @@ app.include_router(review_router)
 from .crawler import router as crawler_router
 app.include_router(crawler_router)
 
+from .push_config import router as push_config_router
+app.include_router(push_config_router)
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
