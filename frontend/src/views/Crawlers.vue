@@ -1,6 +1,6 @@
 <template>
 <n-card title="Python 爬虫管理（独立于 RSS）" style="margin:24px 0">
-  <n-alert type="info" style="margin-bottom:12px">Python 脚本直接使用服务器 Python 运行，无需 Docker。仅允许可信管理员编辑脚本；脚本拥有后端服务账号的文件和网络访问权限。标准输出须为 Crawler JSON v1.0。试运行不入库，点击“采集入库”才保存。</n-alert>
+  <n-alert type="info" style="margin-bottom:12px">Python 脚本直接使用服务器 Python 运行，无需 Docker。仅允许可信管理员编辑脚本；脚本拥有后端服务账号的文件和网络访问权限。试运行允许任意输出（包括网页访问失败的报错），不入库；仅“采集入库”要求输出 Crawler JSON v1.0。</n-alert>
   <n-space style="margin-bottom:12px">
     <n-select v-model:value="selectedId" :options="scripts.map(s=>({label:s.name,value:s.id}))" placeholder="选择脚本" style="width:260px" @update:value="choose"/>
     <n-button @click="newScript">新建</n-button>
@@ -13,7 +13,7 @@
   <n-input v-model:value="name" placeholder="脚本名称" style="margin-bottom:12px"/>
   <n-input v-model:value="code" type="textarea" :autosize="{minRows:15,maxRows:32}" style="font-family:monospace" placeholder="输入 Python 代码"/>
   <n-h4>试运行输出（在线查看）</n-h4>
-  <n-text depth="3">测试只解析 JSON，不写入数据库。调试日志写 stderr。</n-text>
+  <n-text depth="3">试运行原样显示 stdout、stderr 和退出码，不要求 JSON；采集入库时才校验 JSON。</n-text>
   <pre style="white-space:pre-wrap;word-break:break-word;max-height:420px;overflow:auto;background:#f4f6f8;padding:12px">{{output}}</pre>
   <n-h4>爬虫采集记录（仅按 CVE 聚合，最早采集的记录在前）</n-h4>
   <n-collapse>
@@ -59,7 +59,7 @@ function newScript(){selectedId.value=null;name.value='';code.value=example;outp
 function choose(id){const x=scripts.value.find(s=>s.id===id);if(x){name.value=x.name;code.value=x.code;output.value='暂无运行结果'}}
 async function load(){try{scripts.value=(await http.get('')).data.data}catch(e){msg.error(e.message)}}
 async function saveScript(){if(!name.value.trim()||!code.value.trim()){msg.warning('请填写名称和代码');return}saving.value=true;try{const body={name:name.value,code:code.value};const response=selectedId.value?await http.put('/'+selectedId.value,body):await http.post('',body);selectedId.value=response.data.data.id;await load();msg.success('脚本已保存')}catch(e){msg.error(JSON.stringify(e.response?.data?.detail||e.message))}finally{saving.value=false}}
-async function execute(path){running.value=true;output.value='正在执行...';try{const r=await http.post('/'+selectedId.value+'/'+path);output.value=JSON.stringify(r.data.data,null,2);msg.success(path==='test'?'试运行成功':'已采集入库');if(path==='collect')await loadFindings()}catch(e){output.value=JSON.stringify(e.response?.data?.detail||e.message,null,2);msg.error('执行失败，请查看输出')}finally{running.value=false}}
+async function execute(path){running.value=true;output.value='正在执行...';try{const r=await http.post('/'+selectedId.value+'/'+path);const data=r.data.data;output.value=path==='test'?('退出码：'+data.exit_code+'\n\nstdout：\n'+(data.stdout||'(空)')+'\n\nstderr：\n'+(data.stderr||'(空)')):JSON.stringify(data,null,2);if(path==='test'&&data.exit_code!==0)msg.warning('脚本执行报错，已显示输出');else msg.success(path==='test'?'试运行结束':'已采集入库');if(path==='collect')await loadFindings()}catch(e){output.value=JSON.stringify(e.response?.data?.detail||e.message,null,2);msg.error('执行失败，请查看输出')}finally{running.value=false}}
 async function runTest(){await execute('test')}
 async function collect(){await execute('collect')}
 async function remove(){if(!confirm('删除当前脚本？已入库记录保留。'))return;try{await http.delete('/'+selectedId.value);newScript();await load();msg.success('已删除')}catch(e){msg.error(e.message)}}
