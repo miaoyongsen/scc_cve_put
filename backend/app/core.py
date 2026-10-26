@@ -162,6 +162,44 @@ def refresh():
     from .collector import collect_configured_sources
     return {"code":0,"data":collect_configured_sources(),"message":"completed"}
 
+# Manual collection progress is kept in memory for this single-worker deployment.
+import copy
+import threading
+import uuid
+_collection_lock = threading.Lock()
+_collection_jobs = {}
+
+@app.post("/api/v1/vulnerabilities/refresh/start", dependencies=[Depends(auth)])
+def start_refresh():
+    with _collection_lock:
+        if any(j["status"] == "running" for j in _collection_jobs.values()):
+            raise HTTPException(409, "已有采集任务正在运行")
+        job_id = uuid.uuid4().hex
+        _collection_jobs.clear()
+        _collection_jobs[job_id] = {"status": "running", "summary": {"details": [], "items": 0, "primary": 0, "secondary": 0, "new": 0, "errors": []}}
+    def run():
+        from .collector import collect_configured_sources
+        def update(summary):
+            with _collection_lock:
+                _collection_jobs[job_id]["summary"] = copy.deepcopy(summary)
+        try:
+            result = collect_configured_sources(progress=update)
+            with _collection_lock:
+                _collection_jobs[job_id] = {"status": "done", "summary": result}
+        except Exception as exc:
+            with _collection_lock:
+                _collection_jobs[job_id] = {"status": "error", "summary": _collection_jobs[job_id]["summary"], "error": str(exc)}
+    threading.Thread(target=run, daemon=True).start()
+    return {"code": 0, "data": {"job_id": job_id}}
+
+@app.get("/api/v1/vulnerabilities/refresh/status/{job_id}", dependencies=[Depends(auth)])
+def refresh_status(job_id: str):
+    with _collection_lock:
+        job = copy.deepcopy(_collection_jobs.get(job_id))
+    if job is None:
+        raise HTTPException(404, "采集任务不存在")
+    return {"code": 0, "data": job}
+
 # Editable intelligence source settings
 from .settings import router as sources_router
 app.include_router(sources_router)
