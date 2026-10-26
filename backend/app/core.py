@@ -1,17 +1,41 @@
 """Python CVE API and persistence. Provider adapters are intentionally pending parity verification."""
 import os
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Optional
 from fastapi import FastAPI, Header, HTTPException, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pathlib import Path
 from pydantic import BaseModel, Field
-from sqlalchemy import create_engine, String, Text, Boolean, DateTime, Integer, select, func, or_
+from sqlalchemy import create_engine, String, Text, Boolean, DateTime, Integer, select, func, or_, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./cve.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
+
+def _disclosure_timestamp(value):
+    """Normalize RSS RFC2822 dates and ISO8601 dates for reliable sorting."""
+    if not value:
+        return None
+    value = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            parsed = parsedate_to_datetime(value)
+        except (ValueError, TypeError, IndexError, OverflowError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
+
+
+if engine.dialect.name == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _register_disclosure_timestamp(dbapi_connection, connection_record):
+        dbapi_connection.create_function("disclosure_timestamp", 1, _disclosure_timestamp, deterministic=True)
+
 class Base(DeclarativeBase): pass
 class Vulnerability(Base):
     __tablename__ = "vulnerabilities"
@@ -50,7 +74,9 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
     sort_column=sortable.get(sort_by,Vulnerability.disclosure)
     sort_order="asc" if sort_order=="asc" else "desc"
     # SQLite stores disclosure as text; date/time ISO strings can be sorted chronologically.
-    if sort_by=="disclosure":sort_column=func.datetime(Vulnerability.disclosure)
+    if sort_by=="disclosure":
+        sort_column=(func.disclosure_timestamp(Vulnerability.disclosure)
+                     if engine.dialect.name=="sqlite" else Vulnerability.disclosure)
     ordering=(sort_column.asc() if sort_order=="asc" else sort_column.desc()).nullslast()
     with Session(engine) as db:
         stmt=select(Vulnerability)
