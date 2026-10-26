@@ -131,13 +131,22 @@ def read_feed(url, api_key="", header_name="Authorization"):
     def get_text(e,*paths):
         for path in paths:
             x=e.find(path)
-            if x is not None and x.text:return x.text.strip()
+            if x is not None:
+                value=" ".join(x.itertext()).strip()
+                if value:return value
+        return ""
+    def get_link(e):
+        for x in e.iter():
+            if x.tag.rsplit("}",1)[-1]!="link":continue
+            href=x.get("href","").strip()
+            if href and x.get("rel","alternate")=="alternate":return href
+            if x.text and x.text.strip():return x.text.strip()
         return ""
     for e in entries[:2000]:
         title=clean_text(get_text(e,"title","{http://www.w3.org/2005/Atom}title"))
-        description=clean_text(get_text(e,"description","{http://www.w3.org/2005/Atom}summary","{http://www.w3.org/2005/Atom}content"))
-        guid=get_text(e,"guid","link","{http://www.w3.org/2005/Atom}id")
-        disclosure=get_text(e,"pubDate","{http://www.w3.org/2005/Atom}published","{http://www.w3.org/2005/Atom}updated")
+        description=clean_text(get_text(e,"description","{http://www.w3.org/2005/Atom}summary","{http://www.w3.org/2005/Atom}content","{http://purl.org/rss/1.0/modules/content/}encoded"))
+        guid=get_link(e) or get_text(e,"guid","{http://www.w3.org/2005/Atom}id")
+        disclosure=get_text(e,"pubDate","{http://purl.org/dc/elements/1.1/}date","{http://www.w3.org/2005/Atom}published","{http://www.w3.org/2005/Atom}updated")
         cve=CVE_PATTERN.search(title+" "+description)
         if not title:continue
         yield {"key":hashlib.sha256((url+"|"+(guid or title)).encode()).hexdigest(),
@@ -163,7 +172,7 @@ def collect_configured_sources(progress=None):
         sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
     for source_id,name,adapter,notes in sources:
         summary["sources"]+=1
-        detail={"name":name,"items":0,"primary":0,"secondary":0,"new":0,"status":"running"}
+        detail={"name":name,"items":0,"primary":0,"secondary":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
         summary["details"].append(detail)
         if progress:progress(summary)
         if adapter != "rss":
@@ -183,7 +192,9 @@ def collect_configured_sources(progress=None):
                 item["from"]=name
                 if item.get("severity")=="未知" and item.get("cve"):
                     item["severity"]=nvd_severity(item["cve"])
-                if (item.get("severity") or "未知") not in permitted:continue
+                if (item.get("severity") or "未知") not in permitted:
+                    detail["filtered_severity"]+=1
+                    continue
                 if cutoff:
                     try:
                         published=parsedate_to_datetime(item["disclosure"])
@@ -193,14 +204,20 @@ def collect_configured_sources(progress=None):
                             published=datetime.fromisoformat(item["disclosure"].replace("Z","+00:00"))
                             if published.tzinfo is None:published=published.replace(tzinfo=timezone.utc)
                         except (ValueError,TypeError):
+                            detail["missing_date"]+=1
                             continue
-                    if published.astimezone(timezone.utc)<cutoff:continue
+                    if published.astimezone(timezone.utc)<cutoff:
+                        detail["filtered_date"]+=1
+                        continue
                 # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
                 title=item["title"].casefold()
                 direct=next((word for word in keywords if word in title),None)
                 manual=next((word for word in secondary if word in title),None)
-                if not direct and not manual and (keywords or secondary):continue
+                if not direct and not manual and (keywords or secondary):
+                    detail["filtered_keyword"]+=1
+                    continue
                 if not matches(item, True):
+                    detail["filtered_rule"]+=1
                     continue
                 summary["eligible"]+=1
                 if direct:
