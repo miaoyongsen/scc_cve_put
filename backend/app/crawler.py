@@ -74,7 +74,7 @@ def validate_item(item,index):
     if len(json.dumps(result,ensure_ascii=False))>30000:raise ValueError(f"items[{index}] 超出大小限制")
     return result
 
-def run_script(code):
+def run_script(code, strict=True):
     # Runs with the same OS permissions as the backend service; trusted admins only.
     command=[sys.executable,"-c",code]
     try:
@@ -85,8 +85,11 @@ def run_script(code):
         raise HTTPException(408,"爬虫执行超过35秒")
     if len(proc.stdout)>2_000_000 or len(proc.stderr)>100_000:
         raise HTTPException(422,"脚本输出超出大小限制")
+    if not strict:
+        # Preview is for debugging: arbitrary text, JSON, and failure messages are all valid output.
+        return {"stdout":proc.stdout,"stderr":proc.stderr,"exit_code":proc.returncode}
     if proc.returncode:
-        raise HTTPException(422,{"stderr":proc.stderr[-3000:],"exit_code":proc.returncode})
+        raise HTTPException(422,{"stdout":proc.stdout[-3000:],"stderr":proc.stderr[-3000:],"exit_code":proc.returncode})
     try:payload=json.loads(proc.stdout)
     except ValueError:raise HTTPException(422,"stdout 必须仅输出一个 JSON 对象；日志请写入 stderr")
     if not isinstance(payload,dict) or payload.get("version")!="1.0" or not isinstance(payload.get("items"),list):
@@ -132,7 +135,7 @@ def test_script(script_id:int):
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
         code=x.code
-    return {"code":0,"data":run_script(code)}
+    return {"code":0,"data":run_script(code,strict=False)}
 
 @router.post("/{script_id}/collect")
 def collect_script(script_id:int):
