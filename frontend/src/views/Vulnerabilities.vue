@@ -24,7 +24,20 @@ const options=['严重','高危','中危','低危'].map(v=>({label:v,value:v}))
 const pageSize=ref(100),sortBy=ref("disclosure"),sortOrder=ref("desc")
 const pagination=reactive({page:1,pageSize:100,itemCount:0,showSizePicker:true,pageSizes:[20,50,100,200,500],prefix:({itemCount})=>`共 ${itemCount} 条`})
 function changePageSize(size){pageSize.value=size;pagination.pageSize=size;page.value=1;pagination.page=1;checkedIds.value=[];load()}
-function changeSorter(sorter){sortBy.value=sorter?.columnKey||"disclosure";sortOrder.value=sorter?.order==="ascend"?"asc":"desc";page.value=1;pagination.page=1;checkedIds.value=[];load()}
+function changeSorter(sorter){
+  // Naive UI cycles ascend -> descend -> false. Never leave the table in an unsorted state.
+  const key=sorter?.columnKey || 'disclosure'
+  const order=sorter?.order
+  sortBy.value=key
+  sortOrder.value=order==='ascend'?'asc':'desc'
+  page.value=1
+  pagination.page=1
+  checkedIds.value=[]
+  load()
+}
+function columnSortOrder(key){
+  return sortBy.value===key?(sortOrder.value==='asc'?'ascend':'descend'):false
+}
 function formatDate(value){if(!value)return '--';let normalized=String(value).trim();if(/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d/.test(normalized)&&!/(Z|[+-]\d\d:?\d\d)$/.test(normalized))normalized=normalized.replace(' ','T')+'Z';let d=new Date(normalized);if(Number.isNaN(d.getTime()))return value;return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
 const columns = [
   {
@@ -47,12 +60,12 @@ const columns = [
     }
   },
   { type: 'selection', multiple: true },
-  { title: '等级', key: 'severity', sorter: true, width: 90, render: row => h(NTag, { type: row.severity === '严重' ? 'error' : 'warning' }, () => row.severity || '未知') },
-  { title: '漏洞标题', key: 'title', sorter: true, minWidth: 300, render: row => h(NButton, { text: true, type: 'primary', onClick: () => open(row.id) }, () => h('span', { style: { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left', lineHeight: '1.5', display: 'inline-block' } }, row.title)) },
-  { title: 'CVE', key: 'cve', sorter: true, width: 160 },
-  { title: '来源', key: 'from', sorter: true, width: 150, ellipsis: { tooltip: true } },
-  { title: '披露时间', key: 'disclosure', sorter: true, defaultSortOrder: 'descend', width: 185, render: row => formatDate(row.disclosure) },
-  { title: '采集时间', key: 'first_seen', sorter: true, width: 185, render: row => formatDate(row.first_seen) },
+  { title: '等级', key: 'severity', sorter: true, sortOrder: columnSortOrder('severity'), width: 90, render: row => h(NTag, { type: row.severity === '严重' ? 'error' : 'warning' }, () => row.severity || '未知') },
+  { title: '漏洞标题', key: 'title', sorter: true, sortOrder: columnSortOrder('title'), minWidth: 300, render: row => h(NButton, { text: true, type: 'primary', onClick: () => open(row.id) }, () => h('span', { style: { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left', lineHeight: '1.5', display: 'inline-block' } }, row.title)) },
+  { title: 'CVE', key: 'cve', sorter: true, sortOrder: columnSortOrder('cve'), width: 160 },
+  { title: '来源', key: 'from', sorter: true, sortOrder: columnSortOrder('from'), width: 150, ellipsis: { tooltip: true } },
+  { title: '披露时间', key: 'disclosure', sorter: true, sortOrder: columnSortOrder('disclosure'), width: 185, render: row => formatDate(row.disclosure) },
+  { title: '采集时间', key: 'first_seen', sorter: true, sortOrder: columnSortOrder('first_seen'), width: 185, render: row => formatDate(row.first_seen) },
   { title: '原始数据', key: 'raw', width: 100, render: row => rawButton(row) }
 ]
 async function load(){loading.value=true;try{const r=await list({page:page.value,size:pageSize.value,grouped:true,sort_by:sortBy.value,sort_order:sortOrder.value,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;related.value={};total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
