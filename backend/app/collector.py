@@ -108,13 +108,20 @@ def read_feed(url, api_key="", header_name="Authorization"):
     validate_url(url)
     # Redirects disabled; source URL is validated before any request.
     # For public exposure, enforce egress firewall rules as well.
-    with httpx.Client(timeout=15,follow_redirects=False,trust_env=False) as client:
+    max_feed_bytes=30_000_000  # 30 MB; annual feeds such as Microsoft MSRC can be large.
+    with httpx.Client(timeout=httpx.Timeout(60.0,connect=15.0),follow_redirects=False,trust_env=False) as client:
         headers={"User-Agent":"SCC-CVE/0.1","Accept":"application/rss+xml, application/atom+xml, application/xml"}
         if api_key: headers[header_name]=api_key
-        response=client.get(url,headers=headers)
-        response.raise_for_status()
-        if len(response.content)>2_000_000: raise ValueError("Feed too large")
-    root=ET.fromstring(response.content)
+        chunks=[]
+        received=0
+        with client.stream("GET",url,headers=headers) as response:
+            response.raise_for_status()
+            for chunk in response.iter_bytes():
+                received+=len(chunk)
+                if received>max_feed_bytes:
+                    raise ValueError("Feed too large (30 MB limit)")
+                chunks.append(chunk)
+    root=ET.fromstring(b"".join(chunks))
     if root.tag.lower().endswith("rss") or root.tag.lower()=="rss":
         entries=root.findall("./channel/item")
     elif root.tag=="{http://www.w3.org/2005/Atom}feed":
@@ -126,7 +133,7 @@ def read_feed(url, api_key="", header_name="Authorization"):
             x=e.find(path)
             if x is not None and x.text:return x.text.strip()
         return ""
-    for e in entries[:100]:
+    for e in entries[:2000]:
         title=clean_text(get_text(e,"title","{http://www.w3.org/2005/Atom}title"))
         description=clean_text(get_text(e,"description","{http://www.w3.org/2005/Atom}summary","{http://www.w3.org/2005/Atom}content"))
         guid=get_text(e,"guid","link","{http://www.w3.org/2005/Atom}id")
