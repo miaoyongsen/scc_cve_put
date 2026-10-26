@@ -222,6 +222,9 @@ app.include_router(crawler_router)
 from .push_config import router as push_config_router
 app.include_router(push_config_router)
 
+from .ai_config import router as ai_router
+app.include_router(ai_router)
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
