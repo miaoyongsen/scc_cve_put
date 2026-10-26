@@ -2,8 +2,8 @@
 import os
 import httpx
 
-def send_wecom_markdown(text: str):
-    url = os.getenv("WECHAT_WEBHOOK_URL", "")
+def send_wecom_markdown(text: str, url=None):
+    url = url or os.getenv("WECHAT_WEBHOOK_URL", "")
     if not url:
         return False
     if not url.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?"):
