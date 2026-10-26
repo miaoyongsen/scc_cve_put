@@ -18,6 +18,7 @@ class CrawlerScript(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
     code: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(String(30),default="vulnerability",nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda:datetime.now(timezone.utc))
 
 class CrawlerFinding(Base):
@@ -32,15 +33,20 @@ class CrawlerFinding(Base):
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda:datetime.now(timezone.utc))
 
 Base.metadata.create_all(engine)
+from sqlalchemy import inspect, text
+if "content_type" not in {c["name"] for c in inspect(engine).get_columns("crawler_scripts")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE crawler_scripts ADD COLUMN content_type VARCHAR(30) NOT NULL DEFAULT 'vulnerability'"))
 router=APIRouter(prefix="/api/v1/crawlers",dependencies=[Depends(auth)])
 CVE=re.compile(r"^CVE-\\d{4}-\\d{4,}$",re.I)
 LEVELS={"严重","高危","中危","低危","未知"}
 class ScriptInput(BaseModel):
     name:str=Field(min_length=1,max_length=100)
     code:str=Field(min_length=1,max_length=100000)
+    content_type:str=Field(default="vulnerability")
 
 def dto(x):
-    return {"id":x.id,"name":x.name,"code":x.code,"updated_at":x.updated_at}
+    return {"id":x.id,"name":x.name,"code":x.code,"content_type":x.content_type,"updated_at":x.updated_at}
 
 def validate_item(item,index):
     if not isinstance(item,dict):raise ValueError(f"items[{index}] 必须为对象")
@@ -108,7 +114,7 @@ def list_scripts():
 def create_script(body:ScriptInput):
     with Session(engine) as db:
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name)):raise HTTPException(409,"名称已存在")
-        x=CrawlerScript(name=body.name,code=body.code)
+        x=CrawlerScript(name=body.name,code=body.code,content_type=body.content_type)
         db.add(x);db.commit();db.refresh(x)
         return {"code":0,"data":dto(x)}
 
@@ -118,7 +124,7 @@ def update_script(script_id:int,body:ScriptInput):
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name,CrawlerScript.id!=script_id)):raise HTTPException(409,"名称已存在")
-        x.name=body.name;x.code=body.code;x.updated_at=datetime.now(timezone.utc)
+        x.name=body.name;x.code=body.code;x.content_type=body.content_type;x.updated_at=datetime.now(timezone.utc)
         db.commit();return {"code":0,"data":dto(x)}
 
 @router.delete("/{script_id}")
@@ -144,6 +150,7 @@ def collect_script(script_id:int):
         if not x:raise HTTPException(404,"脚本不存在")
         code=x.code
         script_name=x.name
+        content_type=x.content_type
     result=run_script(code)
     inserted=0
     from .core import Vulnerability
@@ -160,7 +167,7 @@ def collect_script(script_id:int):
     for item in result["items"]:
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
-        tier,keyword,rejected=evaluate(item)
+        tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else (("secondary","安全文章",None) if content_type=="article_review" else ("article",None,None))
         if rejected:
             filtered+=1
             continue
@@ -182,7 +189,8 @@ def collect_script(script_id:int):
                 old.severity=item["severity"]
                 old.payload=json.dumps(item,ensure_ascii=False)
             # Shared persistence and CVE grouping; separate collection execution.
-            notify=upsert(db,normalized,True)
+            notify=upsert(db,normalized,content_type=="vulnerability")
+            if content_type!="vulnerability":notify=False
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review:
@@ -193,7 +201,7 @@ def collect_script(script_id:int):
                 notify=False
         if tier=="primary":
             primary+=1
-        else:
+        elif tier=="secondary":
             secondary+=1
         if notify:
             try:
@@ -203,7 +211,7 @@ def collect_script(script_id:int):
             except Exception as exc:
                 notification_errors.append(str(exc)[:160])
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],
-            "primary":primary,"secondary":secondary,"filtered":filtered,
+            "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
             "stderr":result["stderr"]}}
 
