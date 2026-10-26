@@ -2,6 +2,7 @@
 RSS code and configuration are intentionally untouched.
 """
 import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -66,6 +67,9 @@ def validate_item(item,index):
         if d.tzinfo is None:raise ValueError(f"items[{index}].disclosure 必须包含时区")
     if "tags" in item and (not isinstance(item["tags"],list) or not all(isinstance(t,str) for t in item["tags"])):
         raise ValueError(f"items[{index}].tags 必须为字符串数组")
+    source=item.get("source")
+    if source is not None and (not isinstance(source,str) or len(source.strip())>100):
+        raise ValueError(f"items[{index}].source 必须为不超过100字的字符串")
     result={**item,"cve":cve,"severity":severity}
     if len(json.dumps(result,ensure_ascii=False))>30000:raise ValueError(f"items[{index}] 超出大小限制")
     return result
@@ -136,15 +140,40 @@ def collect_script(script_id:int):
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
         code=x.code
+        script_name=x.name
     result=run_script(code)
     inserted=0
+    from .core import Vulnerability
     with Session(engine) as db:
         for item in result["items"]:
-            # Unique within crawler and URL; same CVE across URLs remains separate.
+            # The crawler name is the default source; an explicit item source overrides it.
+            source=(item.get("source") or "").strip() or script_name
+            item={**item,"source":source}
             old=db.scalar(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id,CrawlerFinding.url==item["url"]))
-            if old:continue
-            db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
-            inserted+=1
+            if old is None:
+                db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
+                inserted+=1
+            else:
+                old.cve=item["cve"]
+                old.title=item["title"]
+                old.severity=item["severity"]
+                old.payload=json.dumps(item,ensure_ascii=False)
+            # Same table and CVE grouping as RSS. Stable identity is script + URL.
+            key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
+            vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
+            fields={"title":item["title"],"description":item.get("description") or "",
+                    "severity":item["severity"],"cve":item["cve"],
+                    "disclosure":item.get("disclosure") or "",
+                    "solutions":item.get("solutions") or "",
+                    "references":json.dumps([item["url"]],ensure_ascii=False),
+                    "tags":json.dumps(item.get("tags") or [],ensure_ascii=False),
+                    "source":source}
+            if vuln is None:
+                db.add(Vulnerability(key=key,**fields))
+            else:
+                for field,value in fields.items():
+                    setattr(vuln,field,value)
+                vuln.last_seen=datetime.now(timezone.utc)
         db.commit()
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],"stderr":result["stderr"]}}
 
