@@ -1,4 +1,4 @@
-<template><div class="shell"><header><strong>SCC CVE</strong><nav>漏洞监控　 <router-link to='/sources'>情报来源配置</router-link></nav><n-button quaternary @click="logout">退出</n-button></header><main><div class="head"><div><h2>漏洞监控</h2><n-text depth="3">WatchVuln 多源高价值漏洞情报</n-text></div><n-space><n-button type="error" :disabled="!checkedIds.length" :loading="deleting" @click="bulkDelete">批量删除（{{checkedIds.length}}）</n-button><n-button :loading="enriching" @click="enrichOld">补全历史等级</n-button><n-button @click="openReviews">人工审核（{{pending.length}}）</n-button><n-button type="primary" :loading="refreshing" @click="refreshNow">立即采集</n-button></n-space></div><n-space style="margin:20px 0"><n-input v-model:value="q" clearable placeholder="搜索标题 / CVE" @keyup.enter="load"/><n-select v-model:value="severity" clearable placeholder="严重程度" style="width:130px" :options="options" @update:value="load"/><n-input v-model:value="source" clearable placeholder="来源" @keyup.enter="load"/><n-button @click="load">查询</n-button><n-text depth="3">共 {{total}} 条</n-text></n-space><n-data-table remote striped :row-key="row=>row.id" v-model:checked-row-keys="checkedIds" :columns="columns" :data="rows" :loading="loading" @update:expanded-row-keys="expandRows" :pagination="pagination" @update:page="changePage" @update:page-size="changePageSize" @update:sorter="changeSorter"/><n-modal v-model:show="show" preset="card" :title="selected?.title||'漏洞详情'" style="width:min(850px,95vw)"><n-descriptions v-if="selected" bordered :column="2"><n-descriptions-item label="CVE">{{selected.cve||'--'}}</n-descriptions-item><n-descriptions-item label="严重程度">{{selected.severity}}</n-descriptions-item><n-descriptions-item label="来源">{{selected.from}}</n-descriptions-item><n-descriptions-item label="披露时间">{{formatDate(selected.disclosure)}}</n-descriptions-item><n-descriptions-item label="采集时间">{{formatDate(selected.first_seen)}}</n-descriptions-item><n-descriptions-item label="描述" :span="2"><div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;max-height:340px;overflow:auto">{{selected.description||'暂无描述'}}</div></n-descriptions-item><n-descriptions-item label="原始数据" :span="2"><a v-if="rawLink(selected)" :href="rawLink(selected)" target="_blank" rel="noopener noreferrer">查看原始数据 ↗</a><span v-else>无原始链接</span></n-descriptions-item><n-descriptions-item label="修复建议" :span="2">{{selected.solutions}}</n-descriptions-item></n-descriptions></n-modal><n-modal v-model:show="showReviews" preset="card" title="待人工确认的漏洞" style="width:min(1000px,95vw)"><n-data-table :columns="reviewColumns" :data="pending"/></n-modal></main></div></template>
+<template><div class="shell"><header><strong>SCC CVE</strong><nav>漏洞监控　 <router-link to='/sources'>情报来源配置</router-link></nav><n-button quaternary @click="logout">退出</n-button></header><main><div class="head"><div><h2>漏洞监控</h2><n-text depth="3">WatchVuln 多源高价值漏洞情报</n-text></div><n-space><n-button type="error" :disabled="!checkedIds.length" :loading="deleting" @click="bulkDelete">批量删除（{{checkedIds.length}}）</n-button><n-button :loading="enriching" @click="enrichOld">补全历史等级</n-button><n-button @click="openReviews">人工审核（{{pending.length}}）</n-button><n-button type="primary" :loading="refreshing" @click="refreshNow">立即采集</n-button></n-space></div><n-space style="margin:20px 0"><n-input v-model:value="q" clearable placeholder="搜索标题 / CVE" @keyup.enter="load"/><n-select v-model:value="severity" clearable placeholder="严重程度" style="width:130px" :options="options" @update:value="load"/><n-input v-model:value="source" clearable placeholder="来源" @keyup.enter="load"/><n-button @click="load">查询</n-button><n-text depth="3">共 {{total}} 条</n-text></n-space><n-data-table remote striped :row-key="row=>row.id" v-model:checked-row-keys="checkedIds" :columns="columns" :data="rows" :loading="loading" @update:expanded-row-keys="expandRows" :pagination="pagination" @update:page="changePage" @update:page-size="changePageSize" @update:sorter="changeSorter"/><n-modal v-model:show="show" preset="card" :title="selected?.title||'漏洞详情'" style="width:min(850px,95vw)"><n-descriptions v-if="selected" bordered :column="2"><n-descriptions-item label="CVE">{{selected.cve||'--'}}</n-descriptions-item><n-descriptions-item label="严重程度">{{selected.severity}}</n-descriptions-item><n-descriptions-item label="来源">{{selected.from}}</n-descriptions-item><n-descriptions-item label="披露时间">{{formatDate(selected.disclosure)}}</n-descriptions-item><n-descriptions-item label="采集时间">{{formatDate(selected.first_seen)}}</n-descriptions-item><n-descriptions-item label="描述" :span="2"><div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;max-height:340px;overflow:auto">{{selected.description||'暂无描述'}}</div></n-descriptions-item><n-descriptions-item label="原始数据" :span="2"><a v-if="rawLink(selected)" :href="rawLink(selected)" target="_blank" rel="noopener noreferrer">查看原始数据 ↗</a><span v-else>无原始链接</span></n-descriptions-item><n-descriptions-item label="修复建议" :span="2">{{selected.solutions}}</n-descriptions-item></n-descriptions></n-modal><n-modal v-model:show="showReviews" preset="card" title="待人工确认的漏洞" style="width:min(1000px,95vw)"><n-data-table :columns="reviewColumns" :data="pending"/></n-modal><n-modal v-model:show="showProgress" :mask-closable="false" preset="card" title="本次采集进度" style="width:min(760px,95vw)"><div style="max-height:380px;overflow:auto"><div v-for="(item,i) in progressSummary.details" :key="i" style="padding:10px;border-bottom:1px solid #ddd"><strong>{{i+1}}. {{item.name}} — {{item.status==='running'?'采集中':item.status==='error'?'失败':'完成'}}</strong><div>检测 {{item.items}}　→ 一级 {{item.primary}}　→ 二级 {{item.secondary}}　→ 新增 {{item.new}}</div></div></div><div style="margin-top:14px"><strong>{{progressStatus==='running'?'正在采集……':'采集结束'}}</strong><p>本次检测 {{progressSummary.items||0}} 条；一级 {{progressSummary.primary||0}} 条；二级 {{progressSummary.secondary||0}} 条；新增 {{progressSummary.new||0}} 条</p><p v-if="progressSummary.errors?.length" style="color:red">{{progressSummary.errors.join('；')}}</p></div><template #footer><n-button @click="closeProgress">关闭</n-button></template></n-modal></main></div></template>
 <script setup>
 import{h,ref,reactive,onMounted}from'vue'
 import{useRouter}from'vue-router'
@@ -70,7 +70,47 @@ const columns = [
 ]
 async function load(){loading.value=true;try{const r=await list({page:page.value,size:pageSize.value,grouped:true,sort_by:sortBy.value,sort_order:sortOrder.value,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;related.value={};total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
 async function open(id){try{selected.value=(await detail(id)).data;show.value=true}catch(e){msg.error(e.message)}}
-async function refreshNow(){refreshing.value=true;try{await refresh();await load();msg.success('采集完成')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{refreshing.value=false}}
+const showProgress=ref(false),progressStatus=ref('running'),progressSummary=ref({details:[]})
+let progressTimer=null,autoCloseTimer=null
+function closeProgress(){showProgress.value=false;if(autoCloseTimer)clearTimeout(autoCloseTimer)}
+async function refreshNow(){
+  if(refreshing.value)return
+  refreshing.value=true
+  showProgress.value=true
+  progressStatus.value='running'
+  progressSummary.value={details:[],items:0,primary:0,secondary:0,new:0,errors:[]}
+  if(autoCloseTimer)clearTimeout(autoCloseTimer)
+  try{
+    const headers={Authorization:'Bearer '+(localStorage.getItem('token')||'')}
+    const start=await axios.post('/api/v1/vulnerabilities/refresh/start',{},{headers})
+    const jobId=start.data.data.job_id
+    const poll=async()=>{
+      try{
+        const res=await axios.get('/api/v1/vulnerabilities/refresh/status/'+jobId,{headers})
+        const job=res.data.data
+        progressSummary.value=job.summary
+        progressStatus.value=job.status
+        if(job.status!=='running'){
+          clearInterval(progressTimer)
+          progressTimer=null
+          refreshing.value=false
+          await load()
+          if(job.status==='error')msg.error(job.error||'采集失败')
+          if(job.status==='done'&&!job.summary.new&&!job.summary.errors?.length)
+            autoCloseTimer=setTimeout(()=>{showProgress.value=false},3000)
+        }
+      }catch(e){
+        clearInterval(progressTimer)
+        progressTimer=null
+        refreshing.value=false
+        progressStatus.value='error'
+        msg.error(e.message)
+      }
+    }
+    await poll()
+    if(progressStatus.value==='running')progressTimer=setInterval(poll,1000)
+  }catch(e){refreshing.value=false;progressStatus.value='error';msg.error(e.response?.data?.detail||e.message)}
+}
 function changePage(p){page.value=p;pagination.page=p;checkedIds.value=[];load()}
 function logout(){localStorage.removeItem('token');router.push('/login')}
 onMounted(()=>{load();loadReviews()})
