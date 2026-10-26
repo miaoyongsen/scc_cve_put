@@ -18,6 +18,14 @@ class Skill(Base):
     instructions:Mapped[str]=mapped_column(Text)
     output_format:Mapped[str]=mapped_column(Text,default="")
 Base.metadata.create_all(engine)
+with Session(engine) as db:
+    if not db.query(Skill).first():
+        db.add(Skill(
+            name="漏洞分析规范",
+            instructions="仅根据可核实来源分析漏洞；区分已证实事实与推测；不得编造CVE、受影响版本、漏洞利用条件、补丁版本或参考链接。资料不足时明确写未核实。",
+            output_format="一、漏洞概述\\n二、漏洞原理\\n三、影响范围\\n四、利用条件\\n五、修复建议\\n六、参考来源"
+        ))
+        db.commit()
 router=APIRouter(prefix="/api/v1/settings/ai",dependencies=[Depends(auth)])
 class SettingsInput(BaseModel):
     model:str=""
