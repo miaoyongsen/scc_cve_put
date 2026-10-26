@@ -9,15 +9,21 @@ def dash(value):
     return str(value) if value else "-"
 
 def format_wecom(item):
-    return (
-        "## WatchVuln 漏洞情报\n"
-        f"> **标题**：{dash(item.get('title'))}\n"
-        f"> **CVE**：{dash(item.get('cve'))}\n"
-        f"> **等级**：{dash(item.get('severity'))}\n"
-        f"> **来源**：{dash(item.get('from'))}\n"
-        f"> **披露日期**：{dash(item.get('disclosure'))}\n"
-        "> 请前往 IP Sentinel 漏洞监控查看详情"
-    )
+    """Render the UI-managed template with a fixed, safe placeholder set."""
+    import re
+    from .push_config import current
+    template=current()["message_template"]
+    fields={
+        "title":item.get("title"),"cve":item.get("cve"),
+        "severity":item.get("severity"),"source":item.get("from") or item.get("source"),
+        "disclosure":item.get("disclosure"),"description":item.get("description"),
+        "solutions":item.get("solutions"),"url":item.get("url"),
+    }
+    refs=item.get("references")
+    if not fields["url"] and isinstance(refs,list) and refs:fields["url"]=refs[0]
+    return re.sub(r"\\{(title|cve|severity|source|disclosure|description|solutions|url)\\}",
+                  lambda m:dash(fields.get(m.group(1))),template)
+
 
 def send_smtp(item):
     host=os.getenv("SMTP_HOST","")
