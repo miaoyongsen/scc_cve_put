@@ -15,7 +15,12 @@ class PushConfig(Base):
     quiet_start:Mapped[str]=mapped_column(String(5),default="")
     quiet_end:Mapped[str]=mapped_column(String(5),default="")
     dedup_hours:Mapped[int]=mapped_column(Integer,default=0)
+    message_template:Mapped[str]=mapped_column(String(8000),default="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情")
 Base.metadata.create_all(engine)
+from sqlalchemy import inspect, text
+if "message_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE push_config ADD COLUMN message_template VARCHAR(8000)"))
 router=APIRouter(prefix="/api/v1/settings/push",dependencies=[Depends(auth)])
 class PushInput(BaseModel):
     wecom_enabled:bool=False
@@ -25,11 +30,14 @@ class PushInput(BaseModel):
     quiet_start:str=""
     quiet_end:str=""
     dedup_hours:int=0
+    message_template:str="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情"
+
+DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情"
 
 def current():
     with Session(engine) as db:
         row=db.get(PushConfig,1)
-        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0)
+        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE)
 
 @router.get("")
 def get_config():
@@ -59,6 +67,8 @@ def save_config(body:PushInput):
         row.quiet_start=body.quiet_start
         row.quiet_end=body.quiet_end
         row.dedup_hours=body.dedup_hours
+        if len(body.message_template)>8000:raise HTTPException(422,"模板过长")
+        row.message_template=body.message_template
         db.commit()
     return {"code":0,"message":"saved"}
 
@@ -69,7 +79,8 @@ def test_push():
     if not c["wecom_enabled"] or not c["wecom_webhook"]:
         raise HTTPException(422,"请先启用并保存企业微信 Webhook")
     try:
-        ok=send_wecom_markdown("## 漏洞情报推送测试\\n> 推送配置连接成功",url=c["wecom_webhook"])
+        from .legacy_notify import format_wecom
+        ok=send_wecom_markdown(format_wecom({"title":"推送模板测试","cve":"CVE-2026-12345","severity":"高危","from":"测试来源","disclosure":"2026-10-26","description":"这是一条模板预览测试消息","solutions":"请按官方公告修复","url":"https://example.com"}),url=c["wecom_webhook"])
     except Exception as exc:
         raise HTTPException(502,str(exc)[:200])
     return {"code":0,"data":{"success":ok}}
