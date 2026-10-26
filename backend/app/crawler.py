@@ -147,11 +147,31 @@ def collect_script(script_id:int):
     result=run_script(code)
     inserted=0
     from .core import Vulnerability
-    with Session(engine) as db:
-        for item in result["items"]:
-            # The crawler name is the default source; an explicit item source overrides it.
-            source=(item.get("source") or "").strip() or script_name
-            item={**item,"source":source}
+    from .eligibility import evaluate
+    from .review import Review
+    from .worker import upsert
+    from .legacy_notify import send_vulnerability
+    inserted=0
+    primary=0
+    secondary=0
+    filtered=0
+    notified=0
+    notification_errors=[]
+    for item in result["items"]:
+        source=(item.get("source") or "").strip() or script_name
+        item={**item,"source":source}
+        tier,keyword,rejected=evaluate(item)
+        if rejected:
+            filtered+=1
+            continue
+        key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
+        normalized={"key":key,"title":item["title"],"description":item.get("description") or "",
+                    "severity":item["severity"],"cve":item["cve"],
+                    "disclosure":item.get("disclosure") or "",
+                    "solutions":item.get("solutions") or "",
+                    "references":[item["url"]],"tags":item.get("tags") or [],
+                    "from":source,"reason":[]}
+        with Session(engine) as db:
             old=db.scalar(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id,CrawlerFinding.url==item["url"]))
             if old is None:
                 db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
@@ -161,24 +181,31 @@ def collect_script(script_id:int):
                 old.title=item["title"]
                 old.severity=item["severity"]
                 old.payload=json.dumps(item,ensure_ascii=False)
-            # Same table and CVE grouping as RSS. Stable identity is script + URL.
-            key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
+            # Shared persistence and CVE grouping; separate collection execution.
+            notify=upsert(db,normalized,True)
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
-            fields={"title":item["title"],"description":item.get("description") or "",
-                    "severity":item["severity"],"cve":item["cve"],
-                    "disclosure":item.get("disclosure") or "",
-                    "solutions":item.get("solutions") or "",
-                    "references":json.dumps([item["url"]],ensure_ascii=False),
-                    "tags":json.dumps(item.get("tags") or [],ensure_ascii=False),
-                    "source":source}
-            if vuln is None:
-                db.add(Vulnerability(key=key,**fields))
-            else:
-                for field,value in fields.items():
-                    setattr(vuln,field,value)
-                vuln.last_seen=datetime.now(timezone.utc)
-        db.commit()
-    return {"code":0,"data":{"inserted":inserted,"count":result["count"],"stderr":result["stderr"]}}
+            review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
+            if review:
+                notify=False
+            elif tier=="secondary":
+                db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or ""))
+                db.commit()
+                notify=False
+        if tier=="primary":
+            primary+=1
+        else:
+            secondary+=1
+        if notify:
+            try:
+                outcome=send_vulnerability(normalized)
+                if outcome and any(outcome.values()):
+                    notified+=1
+            except Exception as exc:
+                notification_errors.append(str(exc)[:160])
+    return {"code":0,"data":{"inserted":inserted,"count":result["count"],
+            "primary":primary,"secondary":secondary,"filtered":filtered,
+            "notifications":notified,"notification_errors":notification_errors,
+            "stderr":result["stderr"]}}
 
 @router.get("/findings")
 def list_findings():
