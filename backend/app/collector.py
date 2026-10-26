@@ -146,7 +146,7 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "disclosure":disclosure,"tags":[],"references":[guid] if guid else [],
                "solutions":"","reason":[]}
 
-def collect_configured_sources():
+def collect_configured_sources(progress=None):
     from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
     from .review import Review
     from .core import Vulnerability
@@ -158,13 +158,18 @@ def collect_configured_sources():
     cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
     keywords=[x.casefold() for x in whitelist_keywords()]
     secondary=[x.casefold() for x in review_keywords()]
-    summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[]}
+    summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
     for source_id,name,adapter,notes in sources:
         summary["sources"]+=1
+        detail={"name":name,"items":0,"primary":0,"secondary":0,"new":0,"status":"running"}
+        summary["details"].append(detail)
+        if progress:progress(summary)
         if adapter != "rss":
             summary["errors"].append(f"{name}: unsupported adapter {adapter!r}")
+            detail["status"]="error"
+            if progress:progress(summary)
             continue
         try:
             # notes holds feed URL for RSS adapters.
@@ -174,6 +179,7 @@ def collect_configured_sources():
                 header=credential.header_name if credential else "Authorization"
             for item in read_feed(notes,key,header):
                 summary["items"]+=1
+                detail["items"]+=1
                 item["from"]=name
                 if item.get("severity")=="未知" and item.get("cve"):
                     item["severity"]=nvd_severity(item["cve"])
@@ -197,8 +203,18 @@ def collect_configured_sources():
                 if not matches(item, True):
                     continue
                 summary["eligible"]+=1
+                if direct:
+                    summary["primary"]+=1
+                    detail["primary"]+=1
+                elif manual:
+                    summary["secondary"]+=1
+                    detail["secondary"]+=1
                 with Session(engine) as db:
+                    existing=db.scalar(select(Vulnerability.id).where(Vulnerability.key==item["key"]))
                     notify=upsert(db,item,True)
+                    if existing is None:
+                        summary["new"]+=1
+                        detail["new"]+=1
                     vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==item["key"]))
                     review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
                     if review:
@@ -215,7 +231,11 @@ def collect_configured_sources():
                     except Exception:
                         log.exception("Notification failed for %s",item["key"])
                         summary["errors"].append(f"{name}: notification failed")
+            detail["status"]="done"
         except Exception as exc:
+            detail["status"]="error"
             log.exception("Source %s failed",name)
             summary["errors"].append(f"{name}: {type(exc).__name__}")
+        finally:
+            if progress:progress(summary)
     return summary
