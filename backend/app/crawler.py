@@ -215,6 +215,20 @@ def collect_script(script_id:int):
             "notifications":notified,"notification_errors":notification_errors,
             "stderr":result["stderr"]}}
 
+@router.post("/collect-all")
+def collect_all_scripts():
+    """Run every configured Python crawler; a failure does not stop other scripts."""
+    with Session(engine) as db:
+        ids=[x.id for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]
+    details=[]
+    for script_id in ids:
+        try:
+            result=collect_script(script_id)["data"]
+            details.append({"id":script_id,"ok":True,**result})
+        except Exception as exc:
+            details.append({"id":script_id,"ok":False,"error":str(exc)[:500]})
+    return {"code":0,"data":{"total":len(details),"success":sum(x["ok"] for x in details),"details":details}}
+
 @router.get("/findings")
 def list_findings():
     with Session(engine) as db:
