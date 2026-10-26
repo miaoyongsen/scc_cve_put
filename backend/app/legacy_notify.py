@@ -49,9 +49,20 @@ def send_smtp(item):
 
 def send_vulnerability(item):
     """Returns individual channel results; errors are raised for callers to log."""
+    from .push_config import current
+    c=current()
+    if c["severity_filter"] and item.get("severity") not in c["severity_filter"]:return {}
+    sources=[x.strip().casefold() for x in c["source_filter"].split(",") if x.strip()]
+    if sources and (item.get("from") or "").casefold() not in sources:return {}
+    from datetime import datetime
+    if c["quiet_start"] and c["quiet_end"]:
+        now=datetime.now().strftime("%H:%M")
+        start,end=c["quiet_start"],c["quiet_end"]
+        if (start<=now<end if start<end else now>=start or now<end):return {}
     result={}
-    if os.getenv("WECHAT_WEBHOOK_URL"):
-        result["wechat"]=send_wecom_markdown(format_wecom(item))
+    webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
+    if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
+        result["wechat"]=send_wecom_markdown(format_wecom(item),url=webhook or None)
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         result["email"]=send_smtp(item)
     return result
