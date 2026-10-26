@@ -156,17 +156,12 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "solutions":"","reason":[]}
 
 def collect_configured_sources(progress=None):
-    from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
+    from .eligibility import evaluate
     from .review import Review
     from .core import Vulnerability
     from sqlalchemy import select
     global _nvd_requests
     _nvd_requests=0
-    permitted=set(allowed_severities())
-    hours=lookback_hours()
-    cutoff=datetime.now(timezone.utc)-timedelta(hours=hours) if hours else None
-    keywords=[x.casefold() for x in whitelist_keywords()]
-    secondary=[x.casefold() for x in review_keywords()]
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
@@ -192,30 +187,14 @@ def collect_configured_sources(progress=None):
                 item["from"]=name
                 if item.get("severity")=="未知" and item.get("cve"):
                     item["severity"]=nvd_severity(item["cve"])
-                if (item.get("severity") or "未知") not in permitted:
-                    detail["filtered_severity"]+=1
+                tier,matched,rejected=evaluate(item)
+                if rejected:
+                    field={"severity":"filtered_severity","date":"filtered_date",
+                           "missing_date":"missing_date","keyword":"filtered_keyword"}[rejected]
+                    detail[field]+=1
                     continue
-                if cutoff:
-                    try:
-                        published=parsedate_to_datetime(item["disclosure"])
-                        if published.tzinfo is None: published=published.replace(tzinfo=timezone.utc)
-                    except (ValueError,TypeError,IndexError):
-                        try:
-                            published=datetime.fromisoformat(item["disclosure"].replace("Z","+00:00"))
-                            if published.tzinfo is None:published=published.replace(tzinfo=timezone.utc)
-                        except (ValueError,TypeError):
-                            detail["missing_date"]+=1
-                            continue
-                    if published.astimezone(timezone.utc)<cutoff:
-                        detail["filtered_date"]+=1
-                        continue
-                # RSS has no WatchVuln IsValuable equivalent. Do not pretend it does.
-                title=item["title"].casefold()
-                direct=next((word for word in keywords if word in title),None)
-                manual=next((word for word in secondary if word in title),None)
-                if not direct and not manual and (keywords or secondary):
-                    detail["filtered_keyword"]+=1
-                    continue
+                direct=matched if tier=="primary" else None
+                manual=matched if tier=="secondary" else None
                 if not matches(item, True):
                     detail["filtered_rule"]+=1
                     continue
