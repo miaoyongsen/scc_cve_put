@@ -56,7 +56,7 @@ def send_smtp(item):
             server.send_message(msg)
     return True
 
-def send_vulnerability(item):
+def send_vulnerability(item, ai_enabled=None):
     """Returns individual channel results; errors are raised for callers to log."""
     from .push_config import current
     c=current()
@@ -68,10 +68,28 @@ def send_vulnerability(item):
         now=datetime.now().strftime("%H:%M")
         start,end=c["quiet_start"],c["quiet_end"]
         if (start<=now<end if start<end else now>=start or now<end):return {}
+    # Explicit source opt-in; review approval resolves the persisted source choice.
+    if ai_enabled is None:
+        from .settings import IntelSource
+        from .crawler import CrawlerScript
+        from .core import engine
+        from sqlalchemy.orm import Session
+        with Session(engine) as db:
+            source=db.query(IntelSource).filter_by(name=item.get("from") or "").first()
+            crawler=db.query(CrawlerScript).filter_by(name=item.get("from") or "").first()
+            ai_enabled=bool((source and source.ai_enabled) or (crawler and crawler.ai_enabled))
+    ai_text=""
+    if ai_enabled:
+        try:
+            from .ai_config import analyze_intelligence
+            ai_text=analyze_intelligence(item)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("DeepSeek analysis failed; sending original intelligence")
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
-        result["wechat"]=send_wecom_markdown(format_wecom(item),url=webhook or None)
+        result["wechat"]=send_wecom_markdown(format_wecom(item)+("\n\n## AI 分析（仅供参考）\n"+ai_text[:3000] if ai_text else ""),url=webhook or None)
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         result["email"]=send_smtp(item)
     return result
