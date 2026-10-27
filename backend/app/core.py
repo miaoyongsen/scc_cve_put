@@ -53,9 +53,14 @@ class Vulnerability(Base):
     source: Mapped[str] = mapped_column("from", String(100), default="")
     reason: Mapped[str] = mapped_column(Text, default="[]")
     pushed: Mapped[bool] = mapped_column(Boolean, default=False)
+    content_type: Mapped[str] = mapped_column(String(30), default="vulnerability", nullable=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 Base.metadata.create_all(engine)
+from sqlalchemy import inspect, text
+if "content_type" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN content_type VARCHAR(30) NOT NULL DEFAULT 'vulnerability'"))
 app = FastAPI(title="SCC CVE Push", version="0.1.0")
 
 def auth(authorization: Optional[str] = Header(None)):
@@ -65,7 +70,7 @@ def auth(authorization: Optional[str] = Header(None)):
 
 def serialize(v):
     import json
-    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
+    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
 
 @app.get("/api/v1/vulnerabilities", dependencies=[Depends(auth)])
 def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str="",grouped:bool=False,sort_by:str="disclosure",sort_order:str="desc"):
