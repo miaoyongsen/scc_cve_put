@@ -27,6 +27,8 @@ class AIAnalysis(Base):
     source:Mapped[str]=mapped_column(String(120),default="")
     model:Mapped[str]=mapped_column(String(120),default="")
     result:Mapped[str]=mapped_column(Text,default="")
+    status:Mapped[str]=mapped_column(String(20),default="success")
+    error:Mapped[str]=mapped_column(Text,default="")
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
 Base.metadata.create_all(engine)
 if "api_key" not in {c["name"] for c in inspect(engine).get_columns("ai_settings")}:
@@ -35,6 +37,10 @@ if "api_key" not in {c["name"] for c in inspect(engine).get_columns("ai_settings
 if "enabled" not in {c["name"] for c in inspect(engine).get_columns("ai_settings")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE ai_settings ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT 0"))
+for col,ddl in (("status","VARCHAR(20) NOT NULL DEFAULT 'success'"),("error","TEXT DEFAULT ''")):
+    if col not in {c["name"] for c in inspect(engine).get_columns("ai_analysis_results")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE ai_analysis_results ADD COLUMN "+col+" "+ddl))
 with Session(engine) as db:
     if not db.query(Skill).first():
         db.add(Skill(
@@ -157,24 +163,75 @@ def analyze_intelligence(item):
     result=(data.get("choices") or [{}])[0].get("message",{}).get("content","").strip()
     if not result:raise RuntimeError("DeepSeek 返回空结果")
     vuln_key=(item.get("cve") or "").upper() or item.get("key")
-    if vuln_key:
-        with Session(engine) as db:
-            row=db.query(AIAnalysis).filter_by(vuln_key=vuln_key).first()
-            if not row:row=AIAnalysis(vuln_key=vuln_key);db.add(row)
-            row.source=item.get("from") or ""
-            row.model=model
-            row.result=result
-            row.created_at=datetime.now(timezone.utc)
-            db.commit()
     return result
 
 @router.get("/results")
 def analysis_results(limit:int=50):
     with Session(engine) as db:
         rows=db.query(AIAnalysis).order_by(AIAnalysis.created_at.desc()).limit(min(max(limit,1),200)).all()
-        return {"code":0,"data":[{"key":r.vuln_key,"source":r.source,"model":r.model,"result":r.result,"created_at":r.created_at} for r in rows]}
+        return {"code":0,"data":[{"key":r.vuln_key,"source":r.source,"model":r.model,"result":r.result,"status":r.status,"error":r.error,"created_at":r.created_at} for r in rows]}
 
 def ai_enabled():
     with Session(engine) as db:
         row=db.get(AISettings,1)
         return bool(row and row.enabled)
+
+def queue_post_push_analysis(item):
+    """Claim a CVE once, after a successful notification; process off-thread."""
+    import re
+    import logging
+    from threading import Thread
+    from sqlalchemy.exc import IntegrityError
+    if item.get("content_type","vulnerability")!="vulnerability" or not ai_enabled():
+        return False
+    cve=(item.get("cve") or "").strip().upper()
+    if not re.fullmatch(r"CVE-\\d{4}-\\d{4,}",cve):
+        return False
+    with Session(engine) as db:
+        row=AIAnalysis(vuln_key=cve,source=item.get("from") or "",status="pending",result="")
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return False
+    def run():
+        with Session(engine) as db:
+            row=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
+            if not row or row.status!="pending":return
+            row.status="running"
+            db.commit()
+        try:
+            output=analyze_intelligence(item)
+            status,error="success",""
+        except Exception as exc:
+            logging.getLogger(__name__).exception("DeepSeek analysis failed for %s",cve)
+            output=""
+            status,error="failed",str(exc)[:500]
+        with Session(engine) as db:
+            row=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
+            if row:
+                row.result=output
+                row.status=status
+                row.error=error
+                row.created_at=datetime.now(timezone.utc)
+                db.commit()
+    Thread(target=run,daemon=True,name="ai-"+cve).start()
+    return True
+
+@router.post("/results/{cve}/retry")
+def retry_analysis(cve:str):
+    import re
+    if not re.fullmatch(r"CVE-\\d{4}-\\d{4,}",cve.upper()):
+        raise HTTPException(422,"CVE 编号无效")
+    with Session(engine) as db:
+        row=db.query(AIAnalysis).filter_by(vuln_key=cve.upper()).first()
+        if not row or row.status!="failed":
+            raise HTTPException(409,"只有失败的任务可以重试")
+        from .core import Vulnerability, serialize
+        vuln=db.query(Vulnerability).filter_by(cve=cve.upper()).first()
+        if not vuln:raise HTTPException(404,"原始漏洞不存在")
+        item=serialize(vuln)
+        db.delete(row)
+        db.commit()
+    return {"code":0,"data":{"queued":queue_post_push_analysis(item)}}
