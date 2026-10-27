@@ -164,8 +164,8 @@ def collect_configured_sources(progress=None):
     _nvd_requests=0
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
     with Session(engine) as db:
-        sources=[(s.id,s.name,s.adapter,s.notes) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
-    for source_id,name,adapter,notes in sources:
+        sources=[(s.id,s.name,s.adapter,s.notes,s.ai_enabled) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
+    for source_id,name,adapter,notes,ai_enabled in sources:
         summary["sources"]+=1
         detail={"name":name,"items":0,"primary":0,"secondary":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
         summary["details"].append(detail)
@@ -221,7 +221,7 @@ def collect_configured_sources(progress=None):
                         notify=False
                 if notify:
                     try:
-                        result=send_vulnerability(item)
+                        result=send_vulnerability(item,ai_enabled=ai_enabled)
                         if result and any(result.values()):
                             summary["notifications"]+=1
                     except Exception:
