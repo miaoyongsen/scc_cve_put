@@ -24,7 +24,7 @@ const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> 请前往 IP Sentinel 漏洞监控查看详情"
 const form=ref({wecom_enabled:false,wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate})
 function resetTemplate(){form.value.message_template=defaultTemplate}
-const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=(form.value.message_template||'').replaceAll('\\\\n','\n');for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
+const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=(form.value.message_template||'').split(String.fromCharCode(92)+'n').join(String.fromCharCode(10));for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
 const http=axios.create({baseURL:'/api/v1/settings/push'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
 async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;form.value={...form.value,...d,wecom_webhook:''}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
