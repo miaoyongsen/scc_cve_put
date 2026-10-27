@@ -2,7 +2,7 @@
 <script setup>
 import {ref,computed,onMounted,h} from 'vue'
 import axios from 'axios'
-import {NAlert,NCard,NFormItem,NInput,NSelect,NButton,NSpace,NModal,NText,NDescriptions,NDescriptionsItem,NDataTable,useMessage} from 'naive-ui'
+import {NAlert,NCard,NFormItem,NInput,NSelect,NButton,NSpace,NModal,NText,NDescriptions,NDescriptionsItem,NDataTable,NSwitch,useMessage} from 'naive-ui'
 const msg=useMessage(),saving=ref(false),testing=ref(false)
 const modelOptions=[{label:'DeepSeek V3（deepseek-chat）',value:'deepseek-chat'},{label:'DeepSeek R1（deepseek-reasoner）',value:'deepseek-reasoner'}]
 const form=ref({provider:'DeepSeek',model:'deepseek-chat',api_url:'https://api.deepseek.com',api_key:'',enabled:false,has_api_key:false,system_prompt:'',active_skill:0})
