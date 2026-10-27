@@ -11,7 +11,7 @@
 <n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
-<n-card title="AI 研判联动"><n-alert type="info">只使用 AI 配置中的全局开关，新 CVE 才触发分析。</n-alert><n-button @click="$router.push('/ai-settings')">AI 研判配置</n-button></n-card><n-card title="推送规则">
+<n-card title="AI 研判联动"><n-alert type="info">只使用 AI 配置中的全局开关，研判完成后与漏洞情报合并为一条消息推送。</n-alert><n-button @click="$router.push('/ai-settings')">AI 研判配置</n-button></n-card><n-card title="推送规则">
 <n-form-item label="允许推送的等级（不勾选表示不限等级）"><n-checkbox-group v-model:value="form.severity_filter"><n-space><n-checkbox v-for="x in levels" :key="x" :value="x" :label="x"/></n-space></n-checkbox-group></n-form-item>
 <n-form-item label="允许推送的来源（英文逗号分隔；留空表示全部来源）"><n-input v-model:value="form.source_filter" placeholder="奇安信,GitHub Advisory"/></n-form-item>
 <n-form-item label="静默开始时间（HH:MM，服务器本地时间）"><n-input v-model:value="form.quiet_start" placeholder="例如 23:00"/></n-form-item>
@@ -26,7 +26,7 @@ import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCh
 const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),levels=['严重','高危','中危','低危','未知']
 const savedRows=computed(()=>hasWebhook.value?[{id:1,name:'企业微信默认机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）'}]:[])
 const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:()=>h(NButton,{size:'small',onClick:()=>document.getElementById('wecom-editor')?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
-const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> 请前往 IP Sentinel 漏洞监控查看详情"
+const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const form=ref({wecom_enabled:false,wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate})
 function resetTemplate(){form.value.message_template=defaultTemplate}
 const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=(form.value.message_template||'').split(String.fromCharCode(92)+'n').join(String.fromCharCode(10));for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
