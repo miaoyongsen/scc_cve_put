@@ -68,24 +68,25 @@ def send_vulnerability(item, ai_enabled=None):
         now=datetime.now().strftime("%H:%M")
         start,end=c["quiet_start"],c["quiet_end"]
         if (start<=now<end if start<end else now>=start or now<end):return {}
-    # Explicit source opt-in; review approval resolves the persisted source choice.
-    if ai_enabled is None:
-        from .settings import IntelSource
-        from .crawler import CrawlerScript
+    # One global switch. AI only runs for newly inserted CVE IDs.
+    # The caller must explicitly pass ai_enabled=True for a newly observed CVE.
+    ai_text=""
+    from .ai_config import ai_enabled as global_ai_enabled, AIAnalysis
+    if ai_enabled is True and global_ai_enabled() and item.get("cve"):
         from .core import engine
         from sqlalchemy.orm import Session
+        cve=item["cve"].upper()
         with Session(engine) as db:
-            source=db.query(IntelSource).filter_by(name=item.get("from") or "").first()
-            crawler=db.query(CrawlerScript).filter_by(name=item.get("from") or "").first()
-            ai_enabled=bool((source and source.ai_enabled) or (crawler and crawler.ai_enabled))
-    ai_text=""
-    if ai_enabled:
-        try:
-            from .ai_config import analyze_intelligence
-            ai_text=analyze_intelligence(item)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("DeepSeek analysis failed; sending original intelligence")
+            previous=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
+            if previous:
+                ai_text=previous.result
+        if not ai_text:
+            try:
+                from .ai_config import analyze_intelligence
+                ai_text=analyze_intelligence(item)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("DeepSeek analysis failed; sending original intelligence")
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
