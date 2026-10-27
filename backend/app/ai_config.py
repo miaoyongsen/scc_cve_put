@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import Integer, String, Text, inspect, text, DateTime
+from sqlalchemy import Integer, String, Text, inspect, text, DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from datetime import datetime, timezone
 from .core import Base, engine, auth
@@ -13,6 +13,7 @@ class AISettings(Base):
     system_prompt:Mapped[str]=mapped_column(Text,default="请严谨分析漏洞，区分已核实事实与推测，不编造CVE、受影响版本和修复建议。")
     active_skill:Mapped[int]=mapped_column(Integer,default=0)
     api_key:Mapped[str]=mapped_column(Text,default="")
+    enabled:Mapped[bool]=mapped_column(Boolean,default=False)
 class Skill(Base):
     __tablename__="ai_skill_templates"
     id:Mapped[int]=mapped_column(Integer,primary_key=True)
@@ -31,6 +32,9 @@ Base.metadata.create_all(engine)
 if "api_key" not in {c["name"] for c in inspect(engine).get_columns("ai_settings")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE ai_settings ADD COLUMN api_key TEXT DEFAULT ''"))
+if "enabled" not in {c["name"] for c in inspect(engine).get_columns("ai_settings")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ai_settings ADD COLUMN enabled BOOLEAN NOT NULL DEFAULT 0"))
 with Session(engine) as db:
     if not db.query(Skill).first():
         db.add(Skill(
@@ -47,6 +51,7 @@ class SettingsInput(BaseModel):
     system_prompt:str=""
     active_skill:int=0
     api_key:str=""
+    enabled:bool=False
 class SkillInput(BaseModel):
     name:str
     instructions:str
@@ -55,7 +60,7 @@ class SkillInput(BaseModel):
 def get_settings():
     with Session(engine) as db:
         row=db.get(AISettings,1)
-        return {"code":0,"data":{**{k:getattr(row,k) if row else (0 if k=="active_skill" else "") for k in ("model","provider","api_url","system_prompt","active_skill")},"has_api_key":bool(row and row.api_key)}}
+        return {"code":0,"data":{**{k:getattr(row,k) if row else (0 if k=="active_skill" else "") for k in ("model","provider","api_url","system_prompt","active_skill","enabled")},"has_api_key":bool(row and row.api_key)}}
 @router.put("")
 def save_settings(body:SettingsInput):
     with Session(engine) as db:
@@ -151,7 +156,7 @@ def analyze_intelligence(item):
         data=json.loads(resp.read(2_000_000).decode("utf-8"))
     result=(data.get("choices") or [{}])[0].get("message",{}).get("content","").strip()
     if not result:raise RuntimeError("DeepSeek 返回空结果")
-    vuln_key=item.get("key")
+    vuln_key=(item.get("cve") or "").upper() or item.get("key")
     if vuln_key:
         with Session(engine) as db:
             row=db.query(AIAnalysis).filter_by(vuln_key=vuln_key).first()
@@ -168,3 +173,8 @@ def analysis_results(limit:int=50):
     with Session(engine) as db:
         rows=db.query(AIAnalysis).order_by(AIAnalysis.created_at.desc()).limit(min(max(limit,1),200)).all()
         return {"code":0,"data":[{"key":r.vuln_key,"source":r.source,"model":r.model,"result":r.result,"created_at":r.created_at} for r in rows]}
+
+def ai_enabled():
+    with Session(engine) as db:
+        row=db.get(AISettings,1)
+        return bool(row and row.enabled)
