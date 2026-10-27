@@ -34,6 +34,8 @@ def format_wecom(item):
         fields["severity"]=badge+" "+severity
     for key,value in fields.items():
         template=template.replace("{"+key+"}",dash(value))
+    if "{url}" not in current()["message_template"] and fields["url"]:
+        template+="\n> **原始数据**：[查看原文]("+str(fields["url"])+")"
     return template
 
 
@@ -111,7 +113,7 @@ def send_vulnerability(item, ai_enabled=None):
             logging.getLogger(__name__).exception("AI analysis failed for %s; sending original intelligence",cve)
     message=format_wecom(item)
     if ai_text:
-        message+="\\n\\n## 🔵 AI 研判（仅供参考）\\n"+ai_text[:3000]
+        message+="\n\n## AI 研判（仅供参考）\n"+ai_text[:3000]
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
