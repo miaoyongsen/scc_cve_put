@@ -183,7 +183,7 @@ def collect_script(script_id:int):
                     "disclosure":item.get("disclosure") or "",
                     "solutions":item.get("solutions") or "",
                     "references":[item["url"]],"tags":item.get("tags") or [],
-                    "from":source,"reason":[]}
+                    "from":source,"reason":[],"content_type":content_type}
         with Session(engine) as db:
             old=db.scalar(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id,CrawlerFinding.url==item["url"]))
             if old is None:
