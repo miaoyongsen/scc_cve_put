@@ -37,7 +37,7 @@ DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**
 def current():
     with Session(engine) as db:
         row=db.get(PushConfig,1)
-        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE)
+        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE))
 
 @router.get("")
 def get_config():
