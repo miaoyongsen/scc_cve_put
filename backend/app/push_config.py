@@ -15,7 +15,7 @@ class PushConfig(Base):
     quiet_start:Mapped[str]=mapped_column(String(5),default="")
     quiet_end:Mapped[str]=mapped_column(String(5),default="")
     dedup_hours:Mapped[int]=mapped_column(Integer,default=0)
-    message_template:Mapped[str]=mapped_column(String(8000),default="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情")
+    message_template:Mapped[str]=mapped_column(String(8000),default="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})")
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
 if "message_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
@@ -30,9 +30,9 @@ class PushInput(BaseModel):
     quiet_start:str=""
     quiet_end:str=""
     dedup_hours:int=0
-    message_template:str="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情"
+    message_template:str="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
-DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> 请前往 IP Sentinel 漏洞监控查看详情"
+DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
 def current():
     with Session(engine) as db:
