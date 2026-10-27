@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, String, Text, DateTime, select
+from sqlalchemy import Integer, String, Text, DateTime, select, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth
 
@@ -19,6 +19,7 @@ class CrawlerScript(Base):
     name: Mapped[str] = mapped_column(String(100), unique=True)
     code: Mapped[str] = mapped_column(Text)
     content_type: Mapped[str] = mapped_column(String(30),default="vulnerability",nullable=False)
+    ai_enabled: Mapped[bool] = mapped_column(Boolean,default=False,nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda:datetime.now(timezone.utc))
 
 class CrawlerFinding(Base):
@@ -37,6 +38,9 @@ from sqlalchemy import inspect, text
 if "content_type" not in {c["name"] for c in inspect(engine).get_columns("crawler_scripts")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE crawler_scripts ADD COLUMN content_type VARCHAR(30) NOT NULL DEFAULT 'vulnerability'"))
+if "ai_enabled" not in {c["name"] for c in inspect(engine).get_columns("crawler_scripts")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE crawler_scripts ADD COLUMN ai_enabled BOOLEAN NOT NULL DEFAULT 0"))
 router=APIRouter(prefix="/api/v1/crawlers",dependencies=[Depends(auth)])
 CVE=re.compile(r"^CVE-\\d{4}-\\d{4,}$",re.I)
 LEVELS={"严重","高危","中危","低危","未知"}
@@ -44,9 +48,10 @@ class ScriptInput(BaseModel):
     name:str=Field(min_length=1,max_length=100)
     code:str=Field(min_length=1,max_length=100000)
     content_type:str=Field(default="vulnerability")
+    ai_enabled:bool=False
 
 def dto(x):
-    return {"id":x.id,"name":x.name,"code":x.code,"content_type":x.content_type,"updated_at":x.updated_at}
+    return {"id":x.id,"name":x.name,"code":x.code,"content_type":x.content_type,"ai_enabled":x.ai_enabled,"updated_at":x.updated_at}
 
 def validate_item(item,index):
     if not isinstance(item,dict):raise ValueError(f"items[{index}] 必须为对象")
@@ -114,7 +119,7 @@ def list_scripts():
 def create_script(body:ScriptInput):
     with Session(engine) as db:
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name)):raise HTTPException(409,"名称已存在")
-        x=CrawlerScript(name=body.name,code=body.code,content_type=body.content_type)
+        x=CrawlerScript(name=body.name,code=body.code,content_type=body.content_type,ai_enabled=body.ai_enabled)
         db.add(x);db.commit();db.refresh(x)
         return {"code":0,"data":dto(x)}
 
@@ -124,7 +129,7 @@ def update_script(script_id:int,body:ScriptInput):
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name,CrawlerScript.id!=script_id)):raise HTTPException(409,"名称已存在")
-        x.name=body.name;x.code=body.code;x.content_type=body.content_type;x.updated_at=datetime.now(timezone.utc)
+        x.name=body.name;x.code=body.code;x.content_type=body.content_type;x.ai_enabled=body.ai_enabled;x.updated_at=datetime.now(timezone.utc)
         db.commit();return {"code":0,"data":dto(x)}
 
 @router.delete("/{script_id}")
@@ -151,6 +156,7 @@ def collect_script(script_id:int):
         code=x.code
         script_name=x.name
         content_type=x.content_type
+        ai_enabled=x.ai_enabled
     result=run_script(code)
     inserted=0
     from .core import Vulnerability
@@ -205,7 +211,7 @@ def collect_script(script_id:int):
             secondary+=1
         if notify:
             try:
-                outcome=send_vulnerability(normalized)
+                outcome=send_vulnerability(normalized,ai_enabled=ai_enabled)
                 if outcome and any(outcome.values()):
                     notified+=1
             except Exception as exc:
