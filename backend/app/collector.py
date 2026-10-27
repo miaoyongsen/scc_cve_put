@@ -207,6 +207,7 @@ def collect_configured_sources(progress=None):
                     detail["secondary"]+=1
                 with Session(engine) as db:
                     existing=db.scalar(select(Vulnerability.id).where(Vulnerability.key==item["key"]))
+                    new_cve=bool(item.get("cve")) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
                     notify=upsert(db,item,True)
                     if existing is None:
                         summary["new"]+=1
@@ -221,7 +222,7 @@ def collect_configured_sources(progress=None):
                         notify=False
                 if notify:
                     try:
-                        result=send_vulnerability(item,ai_enabled=ai_enabled)
+                        result=send_vulnerability(item,ai_enabled=new_cve)
                         if result and any(result.values()):
                             summary["notifications"]+=1
                     except Exception:
