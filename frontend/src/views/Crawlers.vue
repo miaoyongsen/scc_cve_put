@@ -16,6 +16,7 @@
   <n-modal v-model:show="editorVisible" preset="card" title="Python 脚本配置" style="max-width:900px">
   <n-input v-model:value="name" placeholder="脚本名称" style="margin-bottom:12px"/>
   <n-select v-model:value="contentType" :options="typeOptions" style="width:320px;margin-bottom:12px"/>
+  <n-space align="center" style="margin-bottom:12px"><span>启用 DeepSeek AI 分析</span><n-switch v-model:value="aiEnabled"/></n-space>
   <n-input v-model:value="code" type="textarea" :autosize="{minRows:15,maxRows:32}" style="font-family:monospace" placeholder="输入 Python 代码"/>
   <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="saveScript">保存配置</n-button><n-button @click="editorVisible=false">关闭</n-button></n-space>
   </n-modal>
@@ -38,10 +39,10 @@
 <script setup>
 import {ref,onMounted,h} from 'vue'
 import axios from 'axios'
-import {useMessage,NCard,NAlert,NSpace,NSelect,NButton,NInput,NH4,NText,NCollapse,NCollapseItem,NDataTable,NModal} from 'naive-ui'
+import {useMessage,NCard,NAlert,NSpace,NSelect,NButton,NInput,NH4,NText,NCollapse,NCollapseItem,NDataTable,NModal,NSwitch} from 'naive-ui'
 const msg=useMessage(),scripts=ref([]),selectedId=ref(null),name=ref(''),code=ref(''),saving=ref(false),running=ref(false),output=ref('暂无运行结果'),findings=ref([])
-const editorVisible=ref(false),contentType=ref('vulnerability')
-const columns=[{title:'脚本名称',key:'name'},{title:'内容类型',key:'content_type',render:r=>({vulnerability:'漏洞情报',article:'安全文章',article_review:'文章审核'}[r.content_type]||'漏洞情报')},{title:'更新时间',key:'updated_at'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>choose(r.id)},()=> '编辑'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('test')}},()=> '试运行'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('collect')}},()=> '采集'),h(NButton,{size:'small',type:'error',onClick:()=>{selectedId.value=r.id;remove()}},()=> '删除')])}]
+const editorVisible=ref(false),contentType=ref('vulnerability'),aiEnabled=ref(false)
+const columns=[{title:'脚本名称',key:'name'},{title:'AI 分析',key:'ai_enabled',render:r=>h(NSwitch,{value:!!r.ai_enabled,'onUpdate:value':async v=>{try{await http.put('/'+r.id,{name:r.name,code:r.code,content_type:r.content_type,ai_enabled:v});r.ai_enabled=v;msg.success(v?'已启用 AI':'已关闭 AI')}catch(e){msg.error(e.response?.data?.detail||e.message)}}})},{title:'内容类型',key:'content_type',render:r=>({vulnerability:'漏洞情报',article:'安全文章',article_review:'文章审核'}[r.content_type]||'漏洞情报')},{title:'更新时间',key:'updated_at'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>choose(r.id)},()=> '编辑'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('test')}},()=> '试运行'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('collect')}},()=> '采集'),h(NButton,{size:'small',type:'error',onClick:()=>{selectedId.value=r.id;remove()}},()=> '删除')])}]
 const typeOptions=[{label:'漏洞情报',value:'vulnerability'},{label:'安全文章（仅入库）',value:'article'},{label:'安全文章（人工审核）',value:'article_review'}]
 const http=axios.create({baseURL:'/api/v1/crawlers',timeout:45000})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
@@ -65,10 +66,10 @@ result = {
 }
 print(json.dumps(result, ensure_ascii=False))
 `
-function newScript(){selectedId.value=null;name.value='';contentType.value='vulnerability';code.value=example;output.value='暂无运行结果';editorVisible.value=true}
-function choose(id){const x=scripts.value.find(s=>s.id===id);if(x){name.value=x.name;contentType.value=x.content_type||"vulnerability";code.value=x.code;output.value='暂无运行结果';editorVisible.value=true}}
+function newScript(){selectedId.value=null;name.value='';contentType.value='vulnerability';aiEnabled.value=false;code.value=example;output.value='暂无运行结果';editorVisible.value=true}
+function choose(id){const x=scripts.value.find(s=>s.id===id);if(x){name.value=x.name;contentType.value=x.content_type||"vulnerability";aiEnabled.value=!!x.ai_enabled;code.value=x.code;output.value='暂无运行结果';editorVisible.value=true}}
 async function load(){try{scripts.value=(await http.get('')).data.data}catch(e){msg.error(e.message)}}
-async function saveScript(){if(!name.value.trim()||!code.value.trim()){msg.warning('请填写名称和代码');return}saving.value=true;try{const body={name:name.value,code:code.value,content_type:contentType.value};const response=selectedId.value?await http.put('/'+selectedId.value,body):await http.post('',body);selectedId.value=response.data.data.id;await load();editorVisible.value=false;msg.success('脚本已保存')}catch(e){msg.error(JSON.stringify(e.response?.data?.detail||e.message))}finally{saving.value=false}}
+async function saveScript(){if(!name.value.trim()||!code.value.trim()){msg.warning('请填写名称和代码');return}saving.value=true;try{const body={name:name.value,code:code.value,content_type:contentType.value,ai_enabled:aiEnabled.value};const response=selectedId.value?await http.put('/'+selectedId.value,body):await http.post('',body);selectedId.value=response.data.data.id;await load();editorVisible.value=false;msg.success('脚本已保存')}catch(e){msg.error(JSON.stringify(e.response?.data?.detail||e.message))}finally{saving.value=false}}
 async function execute(path){running.value=true;output.value='正在执行...';try{const r=await http.post('/'+selectedId.value+'/'+path);const data=r.data.data;output.value=path==='test'?('退出码：'+data.exit_code+'\n\nstdout：\n'+(data.stdout||'(空)')+'\n\nstderr：\n'+(data.stderr||'(空)')):JSON.stringify(data,null,2);if(path==='test'&&data.exit_code!==0)msg.warning('脚本执行报错，已显示输出');else msg.success(path==='test'?'试运行结束':'已采集入库');if(path==='collect')await loadFindings()}catch(e){output.value=JSON.stringify(e.response?.data?.detail||e.message,null,2);msg.error('执行失败，请查看输出')}finally{running.value=false}}
 async function collectAll(){running.value=true;output.value='正在依次采集全部 Python 脚本...';try{const d=(await http.post('/collect-all',{},{timeout:600000})).data.data;output.value=JSON.stringify(d,null,2);msg.success('完成 '+d.success+'/'+d.total+' 个脚本');await loadFindings()}catch(e){output.value=String(e.response?.data?.detail||e.message);msg.error('批量采集失败')}finally{running.value=false}}
 async function runTest(){await execute('test')}
