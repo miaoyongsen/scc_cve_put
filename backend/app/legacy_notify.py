@@ -23,6 +23,15 @@ def format_wecom(item):
     if not fields["url"] and isinstance(refs,list) and refs:fields["url"]=refs[0]
     # Normalize templates saved by older versions that stored literal backslash-n.
     template=template.replace(chr(92)+"n", "\n")
+    severity=dash(fields["severity"])
+    # WeCom robot markdown supports warning/info/comment, not arbitrary hex colors.
+    # Emoji distinguishes critical red from high orange on all clients.
+    severity_badges={"严重":"🔴","高危":"🟠","中危":"🟡","低危":"🟢","未知":"⚪"}
+    badge=severity_badges.get(severity,"⚪")
+    if severity in ("严重","高危"):
+        fields["severity"]=badge+' <font color="warning">'+severity+'</font>'
+    else:
+        fields["severity"]=badge+" "+severity
     for key,value in fields.items():
         template=template.replace("{"+key+"}",dash(value))
     return template
@@ -102,7 +111,7 @@ def send_vulnerability(item, ai_enabled=None):
             logging.getLogger(__name__).exception("AI analysis failed for %s; sending original intelligence",cve)
     message=format_wecom(item)
     if ai_text:
-        message+="\n\n## AI 研判（仅供参考）\n"+ai_text[:3000]
+        message+="\\n\\n## 🔵 AI 研判（仅供参考）\\n"+ai_text[:3000]
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
