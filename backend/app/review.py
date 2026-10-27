@@ -36,7 +36,7 @@ def approve(vulnerability_id:int):
         review.status="sending"
         db.commit()
     try:
-        results=send_vulnerability(item)
+        results=send_vulnerability(item,ai_enabled=False)
         if not results or not all(results.values()):
             raise RuntimeError("No notification channel succeeded")
     except Exception as exc:
