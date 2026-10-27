@@ -68,29 +68,17 @@ def send_vulnerability(item, ai_enabled=None):
         now=datetime.now().strftime("%H:%M")
         start,end=c["quiet_start"],c["quiet_end"]
         if (start<=now<end if start<end else now>=start or now<end):return {}
-    # One global switch. AI only runs for newly inserted CVE IDs.
-    # The caller must explicitly pass ai_enabled=True for a newly observed CVE.
-    ai_text=""
-    from .ai_config import ai_enabled as global_ai_enabled, AIAnalysis
-    if ai_enabled is True and global_ai_enabled() and item.get("cve"):
-        from .core import engine
-        from sqlalchemy.orm import Session
-        cve=item["cve"].upper()
-        with Session(engine) as db:
-            previous=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
-            if previous:
-                ai_text=previous.result
-        if not ai_text:
-            try:
-                from .ai_config import analyze_intelligence
-                ai_text=analyze_intelligence(item)
-            except Exception:
-                import logging
-                logging.getLogger(__name__).exception("DeepSeek analysis failed; sending original intelligence")
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
-        result["wechat"]=send_wecom_markdown(format_wecom(item)+("\n\n## AI 分析（仅供参考）\n"+ai_text[:3000] if ai_text else ""),url=webhook or None)
+        result["wechat"]=send_wecom_markdown(format_wecom(item),url=webhook or None)
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         result["email"]=send_smtp(item)
+    if result and any(result.values()):
+        try:
+            from .ai_config import queue_post_push_analysis
+            queue_post_push_analysis(item)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Failed to enqueue post-push AI analysis")
     return result
