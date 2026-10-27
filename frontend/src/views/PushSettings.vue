@@ -8,6 +8,11 @@
 <n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
+<n-card title="AI 联动推送（按情报来源）" style="margin-bottom:16px">
+<n-alert type="info" style="margin-bottom:12px">先在「AI 配置」保存 DeepSeek 密钥；这里独立选择哪些情报来源在推送前使用 AI 分析。默认关闭。开启后仅新触发的推送会调用 AI。</n-alert>
+<n-space style="margin-bottom:12px"><n-button @click="$router.push('/ai-settings')">打开 AI 配置</n-button><n-button :loading="loadingSources" @click="loadSources">刷新来源</n-button></n-space>
+<n-data-table :data="aiSources" :columns="aiColumns" :row-key="r=>r.kind+'-'+r.id" />
+</n-card>
 <n-card title="推送规则">
 <n-form-item label="允许推送的等级（不勾选表示不限等级）"><n-checkbox-group v-model:value="form.severity_filter"><n-space><n-checkbox v-for="x in levels" :key="x" :value="x" :label="x"/></n-space></n-checkbox-group></n-form-item>
 <n-form-item label="允许推送的来源（英文逗号分隔；留空表示全部来源）"><n-input v-model:value="form.source_filter" placeholder="奇安信,GitHub Advisory"/></n-form-item>
@@ -17,18 +22,30 @@
 </n-card><n-card title="企业微信推送模板" style="margin-top:16px"><n-alert type="info" style="margin-bottom:12px">支持变量：{title} 标题、{cve} 编号、{severity} 等级、{source} 来源、{disclosure} 日期、{description} 描述、{solutions} 修复建议、{url} 原始链接。修改后保存即生效。</n-alert><n-input v-model:value="form.message_template" type="textarea" :rows="12" placeholder="输入 Markdown 推送模板"/><n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存推送模板</n-button><n-button @click="resetTemplate">恢复默认模板（需保存）</n-button></n-space><h3>实时预览</h3><pre style="white-space:pre-wrap;background:#f5f7fa;padding:16px;border-radius:6px">{{preview}}</pre></n-card></div>
 </template>
 <script setup>
-import {ref,computed,onMounted} from 'vue'
+import {ref,computed,onMounted,h} from 'vue'
 import axios from 'axios'
-import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCheckboxGroup,useMessage} from 'naive-ui'
+import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCheckboxGroup,NDataTable,useMessage} from 'naive-ui'
 const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),levels=['严重','高危','中危','低危','未知']
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> 请前往 IP Sentinel 漏洞监控查看详情"
 const form=ref({wecom_enabled:false,wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate})
 function resetTemplate(){form.value.message_template=defaultTemplate}
 const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=(form.value.message_template||'').split(String.fromCharCode(92)+'n').join(String.fromCharCode(10));for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
+const aiSources=ref([]),loadingSources=ref(false)
+const authHeaders=()=>({Authorization:'Bearer '+(localStorage.getItem('token')||'')})
+const aiColumns=[{title:'情报来源',key:'name'},{title:'来源类型',key:'kind',render:r=>r.kind==='rss'?'RSS':'Python 爬虫'},{title:'AI 联动',key:'ai_enabled',render:r=>h(NSwitch,{value:!!r.ai_enabled,'onUpdate:value':v=>toggleAI(r,v)})}]
+async function loadSources(){loadingSources.value=true;try{
+const [rss,python]=await Promise.all([axios.get('/api/v1/settings/sources',{headers:authHeaders()}),axios.get('/api/v1/crawlers',{headers:authHeaders()})])
+aiSources.value=[...rss.data.data.map(x=>({...x,kind:'rss'})),...python.data.data.map(x=>({...x,kind:'python'}))]
+}catch(e){msg.error('加载 AI 来源列表失败：'+(e.response?.data?.detail||e.message))}finally{loadingSources.value=false}}
+async function toggleAI(row,value){try{
+const url=row.kind==='rss'?'/api/v1/settings/sources/'+row.id:'/api/v1/crawlers/'+row.id
+const body=row.kind==='rss'?{name:row.name,adapter:row.adapter,notes:row.notes,enabled:row.enabled,ai_enabled:value}:{name:row.name,code:row.code,content_type:row.content_type,ai_enabled:value}
+await axios.put(url,body,{headers:authHeaders()});row.ai_enabled=value;msg.success(value?'已启用 DeepSeek AI 联动':'已关闭 AI 联动')
+}catch(e){msg.error(e.response?.data?.detail||e.message)}}
 const http=axios.create({baseURL:'/api/v1/settings/push'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
 async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;form.value={...form.value,...d,wecom_webhook:''}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
 async function save(){saving.value=true;try{await http.put('',form.value);msg.success('配置已保存');await load()}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{saving.value=false}}
 async function test(){testing.value=true;try{await http.post('/test');msg.success('测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testing.value=false}}
-onMounted(load)
+onMounted(()=>{load();loadSources()})
 </script>
