@@ -162,7 +162,6 @@ def analyze_intelligence(item):
         data=json.loads(resp.read(2_000_000).decode("utf-8"))
     result=(data.get("choices") or [{}])[0].get("message",{}).get("content","").strip()
     if not result:raise RuntimeError("DeepSeek 返回空结果")
-    vuln_key=(item.get("cve") or "").upper() or item.get("key")
     return result
 
 @router.get("/results")
@@ -185,7 +184,7 @@ def queue_post_push_analysis(item):
     if item.get("content_type","vulnerability")!="vulnerability" or not ai_enabled():
         return False
     cve=(item.get("cve") or "").strip().upper()
-    if not re.fullmatch(r"CVE-\\d{4}-\\d{4,}",cve):
+    if not re.fullmatch(r"CVE-\d{4}-\d{4,}",cve):
         return False
     with Session(engine) as db:
         row=AIAnalysis(vuln_key=cve,source=item.get("from") or "",status="pending",result="")
@@ -222,7 +221,7 @@ def queue_post_push_analysis(item):
 @router.post("/results/{cve}/retry")
 def retry_analysis(cve:str):
     import re
-    if not re.fullmatch(r"CVE-\\d{4}-\\d{4,}",cve.upper()):
+    if not re.fullmatch(r"CVE-\d{4}-\d{4,}",cve.upper()):
         raise HTTPException(422,"CVE 编号无效")
     with Session(engine) as db:
         row=db.query(AIAnalysis).filter_by(vuln_key=cve.upper()).first()
