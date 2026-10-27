@@ -16,7 +16,6 @@
   <n-modal v-model:show="editorVisible" preset="card" title="Python 脚本配置" style="max-width:900px">
   <n-input v-model:value="name" placeholder="脚本名称" style="margin-bottom:12px"/>
   <n-select v-model:value="contentType" :options="typeOptions" style="width:320px;margin-bottom:12px"/>
-  <n-space align="center" style="margin-bottom:12px"><span>启用 DeepSeek AI 分析</span><n-switch v-model:value="aiEnabled"/></n-space>
   <n-input v-model:value="code" type="textarea" :autosize="{minRows:15,maxRows:32}" style="font-family:monospace" placeholder="输入 Python 代码"/>
   <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="saveScript">保存配置</n-button><n-button @click="editorVisible=false">关闭</n-button></n-space>
   </n-modal>
@@ -42,7 +41,7 @@ import axios from 'axios'
 import {useMessage,NCard,NAlert,NSpace,NSelect,NButton,NInput,NH4,NText,NCollapse,NCollapseItem,NDataTable,NModal,NSwitch} from 'naive-ui'
 const msg=useMessage(),scripts=ref([]),selectedId=ref(null),name=ref(''),code=ref(''),saving=ref(false),running=ref(false),output=ref('暂无运行结果'),findings=ref([])
 const editorVisible=ref(false),contentType=ref('vulnerability'),aiEnabled=ref(false)
-const columns=[{title:'脚本名称',key:'name'},{title:'AI 分析',key:'ai_enabled',render:r=>h(NSwitch,{value:!!r.ai_enabled,'onUpdate:value':async v=>{try{await http.put('/'+r.id,{name:r.name,code:r.code,content_type:r.content_type,ai_enabled:v});r.ai_enabled=v;msg.success(v?'已启用 AI':'已关闭 AI')}catch(e){msg.error(e.response?.data?.detail||e.message)}}})},{title:'内容类型',key:'content_type',render:r=>({vulnerability:'漏洞情报',article:'安全文章',article_review:'文章审核'}[r.content_type]||'漏洞情报')},{title:'更新时间',key:'updated_at'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>choose(r.id)},()=> '编辑'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('test')}},()=> '试运行'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('collect')}},()=> '采集'),h(NButton,{size:'small',type:'error',onClick:()=>{selectedId.value=r.id;remove()}},()=> '删除')])}]
+const columns=[{title:'脚本名称',key:'name'},{title:'内容类型',key:'content_type',render:r=>({vulnerability:'漏洞情报',article:'安全文章',article_review:'文章审核'}[r.content_type]||'漏洞情报')},{title:'更新时间',key:'updated_at'},{title:'操作',key:'actions',render:r=>h(NSpace,{},()=>[h(NButton,{size:'small',onClick:()=>choose(r.id)},()=> '编辑'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('test')}},()=> '试运行'),h(NButton,{size:'small',loading:running.value,onClick:()=>{selectedId.value=r.id;execute('collect')}},()=> '采集'),h(NButton,{size:'small',type:'error',onClick:()=>{selectedId.value=r.id;remove()}},()=> '删除')])}]
 const typeOptions=[{label:'漏洞情报',value:'vulnerability'},{label:'安全文章（仅入库）',value:'article'},{label:'安全文章（人工审核）',value:'article_review'}]
 const http=axios.create({baseURL:'/api/v1/crawlers',timeout:45000})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
