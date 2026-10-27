@@ -21,8 +21,11 @@ def format_wecom(item):
     }
     refs=item.get("references")
     if not fields["url"] and isinstance(refs,list) and refs:fields["url"]=refs[0]
-    return re.sub(r"\\{(title|cve|severity|source|disclosure|description|solutions|url)\\}",
-                  lambda m:dash(fields.get(m.group(1))),template)
+    # Normalize templates saved by older versions that stored literal backslash-n.
+    template=template.replace(chr(92)+"n", "\n")
+    for key,value in fields.items():
+        template=template.replace("{"+key+"}",dash(value))
+    return template
 
 
 def send_smtp(item):
