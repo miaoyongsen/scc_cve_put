@@ -68,17 +68,45 @@ def send_vulnerability(item, ai_enabled=None):
         now=datetime.now().strftime("%H:%M")
         start,end=c["quiet_start"],c["quiet_end"]
         if (start<=now<end if start<end else now>=start or now<end):return {}
+    # Single-threaded delivery: analyze first, then send one combined message.
+    # AI is limited to vulnerability intelligence with a valid CVE and global switch.
+    import logging
+    import re
+    ai_text=""
+    cve=(item.get("cve") or "").strip().upper()
+    if (item.get("content_type","vulnerability")=="vulnerability"
+            and re.fullmatch(r"CVE-\d{4}-\d{4,}",cve)):
+        try:
+            from .ai_config import ai_enabled as global_ai_enabled, AIAnalysis, analyze_intelligence
+            if global_ai_enabled():
+                from .core import engine
+                from sqlalchemy.orm import Session
+                with Session(engine) as db:
+                    previous=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
+                    if previous and previous.status=="success":
+                        ai_text=previous.result
+                if not ai_text:
+                    ai_text=analyze_intelligence(item)
+                    with Session(engine) as db:
+                        row=db.query(AIAnalysis).filter_by(vuln_key=cve).first()
+                        if row is None:
+                            row=AIAnalysis(vuln_key=cve)
+                            db.add(row)
+                        row.source=item.get("from") or ""
+                        row.model="deepseek"
+                        row.result=ai_text
+                        row.status="success"
+                        row.error=""
+                        db.commit()
+        except Exception:
+            logging.getLogger(__name__).exception("AI analysis failed for %s; sending original intelligence",cve)
+    message=format_wecom(item)
+    if ai_text:
+        message+="\n\n## AI 研判（仅供参考）\n"+ai_text[:3000]
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
-        result["wechat"]=send_wecom_markdown(format_wecom(item),url=webhook or None)
+        result["wechat"]=send_wecom_markdown(message,url=webhook or None)
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         result["email"]=send_smtp(item)
-    if result and any(result.values()):
-        try:
-            from .ai_config import queue_post_push_analysis
-            queue_post_push_analysis(item)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception("Failed to enqueue post-push AI analysis")
     return result
