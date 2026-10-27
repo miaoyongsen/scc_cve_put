@@ -78,8 +78,9 @@ def set_collection(body:CollectionInput):
         raise HTTPException(422,'Unsupported time range')
     if body.interval_minutes not in ALLOWED_INTERVALS:
         raise HTTPException(422,"Unsupported interval")
-    if len(body.allowed_severities)!=len(set(body.allowed_severities)) or any(x not in ("严重","高危","中危","低危","未知") for x in body.allowed_severities):
-        raise HTTPException(422,"Invalid severity selection")
+    normalized=list(dict.fromkeys(x.strip() for x in body.allowed_severities))
+    if any(x not in ("严重","高危","中危","低危","未知") for x in normalized):
+        raise HTTPException(422,"采集等级仅支持：严重、高危、中危、低危、未知")
     with Session(engine) as db:
         row=db.get(CollectionConfig,1)
         if row is None:
@@ -89,7 +90,7 @@ def set_collection(body:CollectionInput):
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
         row.review_keywords=body.review_keywords
-        row.allowed_severities=','.join(body.allowed_severities)
+        row.allowed_severities=','.join(normalized)
         db.commit()
     from .scheduler import wakeup
     wakeup()
