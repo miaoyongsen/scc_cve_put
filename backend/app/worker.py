@@ -39,13 +39,14 @@ def upsert(db: Session, item: dict, enable_cve_filter: bool):
     cve = item.get("cve") or ""
     tags = item.get("tags") or []
     severity = item.get("severity") or ""
+    content_type = "article" if item.get("content_type") in ("article", "article_review") else "vulnerability"
     if existing is None:
         duplicate = bool(enable_cve_filter and cve and db.scalar(select(func.count()).select_from(Vulnerability).where(Vulnerability.cve == cve)))
         row = Vulnerability(key=key, title=item.get("title") or "", description=item.get("description") or "",
             severity=severity,cve=cve,disclosure=item.get("disclosure") or "",solutions=item.get("solutions") or "",
             references=json.dumps(item.get("references") or [],ensure_ascii=False),
             tags=json.dumps(tags,ensure_ascii=False),github_search=json.dumps(item.get("github_search") or [],ensure_ascii=False),
-            source=item.get("from") or "",reason=json.dumps(item.get("reason") or [],ensure_ascii=False),pushed=duplicate)
+            source=item.get("from") or "",content_type=content_type,reason=json.dumps(item.get("reason") or [],ensure_ascii=False),pushed=duplicate)
         db.add(row)
         db.commit()
         return not duplicate
@@ -57,7 +58,7 @@ def upsert(db: Session, item: dict, enable_cve_filter: bool):
             Vulnerability.cve == cve,Vulnerability.key != key,Vulnerability.pushed.is_(True)))
         should_notify = not bool(other)
     for attr, val in {"title":item.get("title") or "","description":item.get("description") or "",
-        "severity":severity,"cve":cve,"disclosure":item.get("disclosure") or "",
+        "severity":severity,"content_type":content_type,"cve":cve,"disclosure":item.get("disclosure") or "",
         "solutions":item.get("solutions") or "","references":json.dumps(item.get("references") or [],ensure_ascii=False),
         "tags":json.dumps(tags,ensure_ascii=False),"github_search":json.dumps(item.get("github_search") or [],ensure_ascii=False),
         "source":item.get("from") or "","reason":json.dumps(item.get("reason") or [],ensure_ascii=False),
