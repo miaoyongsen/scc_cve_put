@@ -8,12 +8,7 @@
 <n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
-<n-card title="AI 联动推送（按情报来源）" style="margin-bottom:16px">
-<n-alert type="info" style="margin-bottom:12px">先在「AI 配置」保存 DeepSeek 密钥；这里独立选择哪些情报来源在推送前使用 AI 分析。默认关闭。开启后仅新触发的推送会调用 AI。</n-alert>
-<n-space style="margin-bottom:12px"><n-button @click="$router.push('/ai-settings')">打开 AI 配置</n-button><n-button :loading="loadingSources" @click="loadSources">刷新来源</n-button></n-space>
-<n-data-table :data="aiSources" :columns="aiColumns" :row-key="r=>r.kind+'-'+r.id" />
-</n-card>
-<n-card title="推送规则">
+<n-card title="AI 研判联动"><n-alert type="info">只使用 AI 配置中的全局开关，新 CVE 才触发分析。</n-alert><n-button @click="$router.push('/ai-settings')">AI 研判配置</n-button></n-card><n-card title="推送规则">
 <n-form-item label="允许推送的等级（不勾选表示不限等级）"><n-checkbox-group v-model:value="form.severity_filter"><n-space><n-checkbox v-for="x in levels" :key="x" :value="x" :label="x"/></n-space></n-checkbox-group></n-form-item>
 <n-form-item label="允许推送的来源（英文逗号分隔；留空表示全部来源）"><n-input v-model:value="form.source_filter" placeholder="奇安信,GitHub Advisory"/></n-form-item>
 <n-form-item label="静默开始时间（HH:MM，服务器本地时间）"><n-input v-model:value="form.quiet_start" placeholder="例如 23:00"/></n-form-item>
