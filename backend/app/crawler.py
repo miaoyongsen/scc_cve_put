@@ -195,6 +195,7 @@ def collect_script(script_id:int):
                 old.severity=item["severity"]
                 old.payload=json.dumps(item,ensure_ascii=False)
             # Shared persistence and CVE grouping; separate collection execution.
+            new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
             notify=upsert(db,normalized,content_type=="vulnerability")
             if content_type!="vulnerability":notify=False
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
@@ -211,7 +212,7 @@ def collect_script(script_id:int):
             secondary+=1
         if notify:
             try:
-                outcome=send_vulnerability(normalized,ai_enabled=ai_enabled)
+                outcome=send_vulnerability(normalized,ai_enabled=new_cve)
                 if outcome and any(outcome.values()):
                     notified+=1
             except Exception as exc:
