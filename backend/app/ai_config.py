@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Integer, String, Text, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth
 class AISettings(Base):
@@ -11,6 +11,7 @@ class AISettings(Base):
     api_url:Mapped[str]=mapped_column(String(500),default="")
     system_prompt:Mapped[str]=mapped_column(Text,default="请严谨分析漏洞，区分已核实事实与推测，不编造CVE、受影响版本和修复建议。")
     active_skill:Mapped[int]=mapped_column(Integer,default=0)
+    api_key:Mapped[str]=mapped_column(Text,default="")
 class Skill(Base):
     __tablename__="ai_skill_templates"
     id:Mapped[int]=mapped_column(Integer,primary_key=True)
@@ -18,6 +19,9 @@ class Skill(Base):
     instructions:Mapped[str]=mapped_column(Text)
     output_format:Mapped[str]=mapped_column(Text,default="")
 Base.metadata.create_all(engine)
+if "api_key" not in {c["name"] for c in inspect(engine).get_columns("ai_settings")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE ai_settings ADD COLUMN api_key TEXT DEFAULT ''"))
 with Session(engine) as db:
     if not db.query(Skill).first():
         db.add(Skill(
@@ -33,6 +37,7 @@ class SettingsInput(BaseModel):
     api_url:str=""
     system_prompt:str=""
     active_skill:int=0
+    api_key:str=""
 class SkillInput(BaseModel):
     name:str
     instructions:str
@@ -41,13 +46,14 @@ class SkillInput(BaseModel):
 def get_settings():
     with Session(engine) as db:
         row=db.get(AISettings,1)
-        return {"code":0,"data":{k:getattr(row,k) if row else (0 if k=="active_skill" else "") for k in ("model","provider","api_url","system_prompt","active_skill")}}
+        return {"code":0,"data":{**{k:getattr(row,k) if row else (0 if k=="active_skill" else "") for k in ("model","provider","api_url","system_prompt","active_skill")},"has_api_key":bool(row and row.api_key)}}
 @router.put("")
 def save_settings(body:SettingsInput):
     with Session(engine) as db:
         row=db.get(AISettings,1)
         if not row:row=AISettings(id=1);db.add(row)
-        for k,v in body.dict().items():setattr(row,k,v)
+        for k,v in body.dict(exclude={"api_key"}).items():setattr(row,k,v)
+        if body.api_key.strip():row.api_key=body.api_key.strip()
         db.commit()
     return {"code":0}
 @router.get("/skills")
@@ -84,3 +90,29 @@ def get_prompt():
         prompt=row.system_prompt if row else ""
         if skill:prompt+="\n\n# "+skill.name+"\n"+skill.instructions+"\n"+skill.output_format
         return {"code":0,"data":{"prompt":prompt}}
+
+@router.post("/test")
+def test_connection():
+    import json
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+    with Session(engine) as db:
+        row=db.get(AISettings,1)
+        if not row or not row.api_key:
+            raise HTTPException(422,"请先保存 DeepSeek API Key")
+        model=row.model or "deepseek-chat"
+        api_key=row.api_key
+    if model not in ("deepseek-chat","deepseek-reasoner"):
+        raise HTTPException(422,"请选择 DeepSeek 模型")
+    req=Request("https://api.deepseek.com/chat/completions",
+        data=json.dumps({"model":model,"messages":[{"role":"user","content":"仅回复 OK"}],"max_tokens":64,"stream":False}).encode("utf-8"),
+        headers={"Authorization":"Bearer "+api_key,"Content-Type":"application/json"},method="POST")
+    try:
+        with urlopen(req,timeout=20) as resp:
+            data=json.loads(resp.read(1048576).decode("utf-8"))
+        answer=(data.get("choices") or [{}])[0].get("message",{}).get("content","")
+        return {"code":0,"data":{"success":True,"model":model,"reply":answer}}
+    except HTTPError as exc:
+        raise HTTPException(502,"DeepSeek HTTP "+str(exc.code))
+    except (URLError,TimeoutError,ValueError,KeyError) as exc:
+        raise HTTPException(502,"DeepSeek 连接失败："+type(exc).__name__)
