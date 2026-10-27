@@ -75,5 +75,5 @@ async function runTest(){await execute('test')}
 async function collect(){await execute('collect')}
 async function remove(){if(!confirm('删除当前脚本？已入库记录保留。'))return;try{await http.delete('/'+selectedId.value);newScript();await load();msg.success('已删除')}catch(e){msg.error(e.message)}}
 async function loadFindings(){try{findings.value=(await http.get('/findings')).data.data}catch(e){msg.error(e.message)}}
-onMounted(()=>{newScript();load();loadFindings()})
+onMounted(()=>{load();loadFindings()})
 </script>
