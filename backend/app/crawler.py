@@ -42,7 +42,7 @@ if "ai_enabled" not in {c["name"] for c in inspect(engine).get_columns("crawler_
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE crawler_scripts ADD COLUMN ai_enabled BOOLEAN NOT NULL DEFAULT 0"))
 router=APIRouter(prefix="/api/v1/crawlers",dependencies=[Depends(auth)])
-CVE=re.compile(r"^CVE-\\d{4}-\\d{4,}$",re.I)
+CVE=re.compile(r"^CVE-\d{4}-\d{4,}$",re.I)
 LEVELS={"严重","高危","中危","低危","未知"}
 class ScriptInput(BaseModel):
     name:str=Field(min_length=1,max_length=100)
