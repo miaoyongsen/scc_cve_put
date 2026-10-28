@@ -105,7 +105,7 @@ def validate_url(url):
             raise ValueError("Private or reserved IP address not allowed")
     return url
 
-def read_feed(url, api_key="", header_name="Authorization"):
+def read_feed(url, api_key="", header_name="Authorization", on_status=None):
     validate_url(url)
     # Redirects disabled; source URL is validated before any request.
     # For public exposure, enforce egress firewall rules as well.
@@ -116,6 +116,7 @@ def read_feed(url, api_key="", header_name="Authorization"):
         chunks=[]
         received=0
         with client.stream("GET",url,headers=headers) as response:
+            if on_status:on_status(response.status_code)
             response.raise_for_status()
             for chunk in response.iter_bytes():
                 received+=len(chunk)
@@ -156,7 +157,7 @@ def read_feed(url, api_key="", header_name="Authorization"):
                "disclosure":disclosure,"tags":[],"references":[guid] if guid else [],
                "solutions":"","reason":[]}
 
-def collect_configured_sources(progress=None):
+def _collect_configured_sources(progress=None):
     from .eligibility import evaluate
     from .review import Review
     from .core import Vulnerability
@@ -168,7 +169,7 @@ def collect_configured_sources(progress=None):
         sources=[(s.id,s.name,s.adapter,s.notes,s.ai_enabled) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
     for source_id,name,adapter,notes,ai_enabled in sources:
         summary["sources"]+=1
-        detail={"name":name,"items":0,"primary":0,"secondary":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
+        detail={"name":name,"adapter":adapter,"http_status":None,"duplicates":[],"pushed":[],"pending":[],"items":0,"primary":0,"secondary":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
         summary["details"].append(detail)
         if progress:progress(summary)
         if adapter != "rss":
@@ -182,7 +183,7 @@ def collect_configured_sources(progress=None):
                 credential=db.get(SourceCredential,source_id)
                 key=credential.api_key if credential else ""
                 header=credential.header_name if credential else "Authorization"
-            for item in read_feed(notes,key,header):
+            for item in read_feed(notes,key,header,on_status=lambda code:detail.update(http_status=code)):
                 summary["items"]+=1
                 detail["items"]+=1
                 item["from"]=name
@@ -221,6 +222,9 @@ def collect_configured_sources(progress=None):
                         db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=manual))
                         db.commit()
                         notify=False
+                if existing is not None or (item.get("cve") and not new_cve):
+                    detail["duplicates"].append({"title":item.get("title"),"cve":item.get("cve"),"reason":"已有记录或重复 CVE"})
+                if tier=="secondary":detail["pending"].append({"title":item.get("title"),"cve":item.get("cve")})
                 log_run(item,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),matched or "")
                 if notify:
                     try:
@@ -228,6 +232,7 @@ def collect_configured_sources(progress=None):
                         if result and any(result.values()):
                             summary["notifications"]+=1
                             log_run(item,tier,"推送成功")
+                            detail["pushed"].append({"title":item.get("title"),"cve":item.get("cve")})
                         else:
                             log_run(item,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
                     except Exception as exc:
@@ -242,3 +247,19 @@ def collect_configured_sources(progress=None):
         finally:
             if progress:progress(summary)
     return summary
+
+def collect_configured_sources(progress=None):
+    from .core import _active_run,begin_run,finish_run
+    existing=_active_run.get()
+    if existing:return _collect_configured_sources(progress)
+    run_id=begin_run("RSS 采集")
+    token=_active_run.set(run_id)
+    try:
+        summary=_collect_configured_sources(progress)
+        finish_run(run_id,"失败" if summary["errors"] and not summary["items"] else ("部分失败" if summary["errors"] else "完成"),summary)
+        return summary
+    except Exception as exc:
+        finish_run(run_id,"失败",{"error":str(exc)})
+        raise
+    finally:
+        _active_run.reset(token)
