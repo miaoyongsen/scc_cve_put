@@ -5,6 +5,7 @@
         <strong>SCC CVE</strong>
         <nav>
           <router-link to="/vulnerabilities">漏洞监控</router-link>
+          <router-link to="/run-records">运行记录</router-link>
           <router-link to="/sources">情报来源配置</router-link>
           <router-link to="/push-settings">推送配置</router-link>
           <router-link to="/ai-settings">AI 配置</router-link>
