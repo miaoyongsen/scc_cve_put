@@ -252,7 +252,7 @@ def _collect_configured_sources(progress=None):
 import threading
 _collection_mutex=threading.Lock()
 
-def collect_configured_sources(progress=None):
+def collect_configured_sources(progress=None, mode="all"):
     from .core import _active_run, begin_run, finish_run
     from .crawler import CrawlerScript, _collect_script
     if not _collection_mutex.acquire(blocking=False):
@@ -260,19 +260,22 @@ def collect_configured_sources(progress=None):
     run_id=None
     token=None
     try:
-        run_id=begin_run("统一采集（RSS + Python）")
+        run_id=begin_run({"all":"统一采集（RSS + Python）","vulnerability":"漏洞情报定时采集","article":"安全文章定时采集"}.get(mode,"统一采集"))
         token=_active_run.set(run_id)
         summary={"sources":0,"items":0,"eligible":0,"notifications":0,
                  "errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
         try:
-            rss=_collect_configured_sources(progress)
-            summary.update(rss)
+            if mode!="article":
+                rss=_collect_configured_sources(progress)
+                summary.update(rss)
         except Exception as exc:
             log.exception("RSS collection failed")
             summary["errors"].append("RSS: "+str(exc)[:200])
         if progress:progress(summary)
         with Session(engine) as db:
-            scripts=[(x.id,x.name) for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]
+            scripts=[(x.id,x.name) for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()
+                     if mode=="all" or (mode=="article" and x.content_type in ("article","article_review"))
+                     or (mode=="vulnerability" and x.content_type=="vulnerability")]
         for script_id,name in scripts:
             detail={"id":script_id,"name":name,"adapter":"python","http_status":None,
                     "status":"running","items":0,"new":0,"primary":0,"secondary":0,
