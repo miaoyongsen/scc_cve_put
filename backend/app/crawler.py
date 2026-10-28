@@ -191,7 +191,8 @@ def _collect_script(script_id:int):
                     "references":[item["url"]],"tags":item.get("tags") or [],
                     "from":source,"reason":[],"content_type":content_type}
         with Session(engine) as db:
-            old=db.scalar(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id,CrawlerFinding.url==item["url"]))
+            url_fingerprint=hashlib.md5(item["url"].encode("utf-8")).hexdigest()
+            old=next((record for record in db.scalars(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id)).all() if hashlib.md5(record.url.encode("utf-8")).hexdigest()==url_fingerprint),None)
             if old is None:
                 db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
                 inserted+=1
