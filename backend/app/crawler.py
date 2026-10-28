@@ -204,9 +204,10 @@ def _collect_script(script_id:int):
             # Shared persistence and CVE grouping; separate collection execution.
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
             notify=upsert(db,normalized,content_type=="vulnerability")
-            # Articles are delivered once on first discovery, independent of severity/tier.
+            # Article notifications must not be suppressed by URL reuse: one URL may
+            # contain changing advisories or multiple CVEs across collection runs.
             if content_type in ("article","article_review"):
-                notify=old is None
+                notify=True
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review and content_type=="vulnerability":
