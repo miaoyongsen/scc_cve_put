@@ -51,7 +51,7 @@ class ScriptInput(BaseModel):
     ai_enabled:bool=False
 
 def dto(x):
-    return {"id":x.id,"name":x.name,"code":x.code,"content_type":x.content_type,"ai_enabled":x.ai_enabled,"updated_at":x.updated_at}
+    return {"id":x.id,"name":x.name,"code":x.code,"content_type":("article" if x.content_type=="article_review" else x.content_type),"ai_enabled":x.ai_enabled,"updated_at":x.updated_at}
 
 def validate_item(item,index):
     if not isinstance(item,dict):raise ValueError(f"items[{index}] 必须为对象")
@@ -119,7 +119,7 @@ def list_scripts():
 def create_script(body:ScriptInput):
     with Session(engine) as db:
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name)):raise HTTPException(409,"名称已存在")
-        x=CrawlerScript(name=body.name,code=body.code,content_type=body.content_type,ai_enabled=body.ai_enabled)
+        x=CrawlerScript(name=body.name,code=body.code,content_type=("article" if body.content_type=="article_review" else body.content_type),ai_enabled=body.ai_enabled)
         db.add(x);db.commit();db.refresh(x)
         return {"code":0,"data":dto(x)}
 
@@ -129,7 +129,7 @@ def update_script(script_id:int,body:ScriptInput):
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
         if db.scalar(select(CrawlerScript).where(CrawlerScript.name==body.name,CrawlerScript.id!=script_id)):raise HTTPException(409,"名称已存在")
-        x.name=body.name;x.code=body.code;x.content_type=body.content_type;x.ai_enabled=body.ai_enabled;x.updated_at=datetime.now(timezone.utc)
+        x.name=body.name;x.code=body.code;x.content_type=("article" if body.content_type=="article_review" else body.content_type);x.ai_enabled=body.ai_enabled;x.updated_at=datetime.now(timezone.utc)
         db.commit();return {"code":0,"data":dto(x)}
 
 @router.delete("/{script_id}")
@@ -157,6 +157,7 @@ def _collect_script(script_id:int):
         script_name=x.name
         content_type=x.content_type
         ai_enabled=x.ai_enabled
+    if content_type=="article_review":content_type="article"
     result=run_script(code)
     inserted=0
     from .core import Vulnerability
