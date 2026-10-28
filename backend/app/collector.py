@@ -248,18 +248,66 @@ def _collect_configured_sources(progress=None):
             if progress:progress(summary)
     return summary
 
+# One collection session covers RSS and configured Python scripts.
+import threading
+_collection_mutex=threading.Lock()
+
 def collect_configured_sources(progress=None):
-    from .core import _active_run,begin_run,finish_run
-    existing=_active_run.get()
-    if existing:return _collect_configured_sources(progress)
-    run_id=begin_run("RSS 采集")
-    token=_active_run.set(run_id)
+    from .core import _active_run, begin_run, finish_run
+    from .crawler import CrawlerScript, _collect_script
+    if not _collection_mutex.acquire(blocking=False):
+        raise RuntimeError("已有统一采集任务正在运行")
+    run_id=None
+    token=None
     try:
-        summary=_collect_configured_sources(progress)
-        finish_run(run_id,"失败" if summary["errors"] and not summary["items"] else ("部分失败" if summary["errors"] else "完成"),summary)
+        run_id=begin_run("统一采集（RSS + Python）")
+        token=_active_run.set(run_id)
+        summary={"sources":0,"items":0,"eligible":0,"notifications":0,
+                 "errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
+        try:
+            rss=_collect_configured_sources(progress)
+            summary.update(rss)
+        except Exception as exc:
+            log.exception("RSS collection failed")
+            summary["errors"].append("RSS: "+str(exc)[:200])
+        if progress:progress(summary)
+        with Session(engine) as db:
+            scripts=[(x.id,x.name) for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]
+        for script_id,name in scripts:
+            detail={"id":script_id,"name":name,"adapter":"python","http_status":None,
+                    "status":"running","items":0,"new":0,"primary":0,"secondary":0,
+                    "notifications":0,"duplicates":[],"pushed":[],"pending":[]}
+            summary["sources"]+=1
+            summary["details"].append(detail)
+            if progress:progress(summary)
+            try:
+                data=_collect_script(script_id)["data"]
+                detail.update(data)
+                detail["items"]=data.get("count",0)
+                detail["new"]=data.get("inserted",0)
+                detail["status"]="done" if not data.get("notification_errors") else "partial"
+                summary["items"]+=detail["items"]
+                summary["new"]+=detail["new"]
+                summary["primary"]+=data.get("primary",0)
+                summary["secondary"]+=data.get("secondary",0)
+                summary["notifications"]+=data.get("notifications",0)
+                summary["eligible"]+=detail["items"]-data.get("filtered",0)
+                if data.get("notification_errors"):
+                    summary["errors"].extend(name+": "+e for e in data["notification_errors"])
+            except Exception as exc:
+                detail["status"]="error"
+                detail["error"]=str(exc)[:500]
+                summary["errors"].append(name+": "+str(exc)[:200])
+                log.exception("Python crawler %s failed",name)
+            finally:
+                if progress:progress(summary)
+        failed=sum(d.get("status")=="error" for d in summary["details"])
+        state="失败" if summary["details"] and failed==len(summary["details"]) else ("部分失败" if summary["errors"] else "完成")
+        finish_run(run_id,state,summary)
         return summary
     except Exception as exc:
-        finish_run(run_id,"失败",{"error":str(exc)})
+        if run_id is not None:finish_run(run_id,"失败",{"error":str(exc)})
         raise
     finally:
-        _active_run.reset(token)
+        if token is not None:_active_run.reset(token)
+        _collection_mutex.release()
