@@ -13,6 +13,8 @@ def format_wecom(item):
     import re
     from .push_config import current
     template=current()["message_template"]
+    if item.get("content_type") in ("article","article_review"):
+        template=template.replace("WatchVuln 漏洞情报","WatchVuln 安全文章")
     fields={
         "title":item.get("title"),"cve":item.get("cve"),
         "severity":item.get("severity"),"source":item.get("from") or item.get("source"),
