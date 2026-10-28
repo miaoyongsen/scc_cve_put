@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import Integer, String, DateTime, ForeignKey, select
 from sqlalchemy.orm import Mapped, mapped_column, Session
-from .core import Base, engine, auth, Vulnerability, serialize
+from .core import Base, engine, auth, Vulnerability, serialize, log_run
 from .legacy_notify import send_vulnerability
 
 class Review(Base):
@@ -44,6 +44,7 @@ def approve(vulnerability_id:int):
             review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
             review.status="pending"
             db.commit()
+        log_run(item,"secondary","推送失败",str(exc))
         raise HTTPException(502,"Notification failed: "+str(exc)[:150])
     with Session(engine) as db:
         review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
@@ -52,6 +53,7 @@ def approve(vulnerability_id:int):
         vuln=db.get(Vulnerability,vulnerability_id)
         vuln.pushed=True
         db.commit()
+    log_run(item,"secondary","推送成功","人工审核通过")
     return {"code":0,"message":"approved and sent"}
 
 @router.post("/{vulnerability_id}/reject")
