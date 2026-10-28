@@ -26,6 +26,7 @@ if "article_template" not in {c["name"] for c in inspect(engine).get_columns("pu
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE push_config ADD COLUMN article_template VARCHAR(8000)"))
 router=APIRouter(prefix="/api/v1/settings/push",dependencies=[Depends(auth)])
+DEFAULT_ARTICLE_TEMPLATE="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 class PushInput(BaseModel):
     article_template:str=DEFAULT_ARTICLE_TEMPLATE
     wecom_enabled:bool=False
@@ -37,7 +38,6 @@ class PushInput(BaseModel):
     dedup_hours:int=0
     message_template:str="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
-DEFAULT_ARTICLE_TEMPLATE="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
 DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
