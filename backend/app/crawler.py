@@ -164,6 +164,7 @@ def collect_script(script_id:int):
     from .review import Review
     from .worker import upsert
     from .legacy_notify import send_vulnerability
+from .core import log_run
     inserted=0
     primary=0
     secondary=0
@@ -212,12 +213,17 @@ def collect_script(script_id:int):
             primary+=1
         elif tier=="secondary":
             secondary+=1
+        log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),keyword or "")
         if notify:
             try:
                 outcome=send_vulnerability(normalized,ai_enabled=new_cve)
                 if outcome and any(outcome.values()):
                     notified+=1
+                    log_run(normalized,tier,"推送成功")
+                else:
+                    log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
             except Exception as exc:
+                log_run(normalized,tier,"推送失败",str(exc))
                 notification_errors.append(str(exc)[:160])
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],
             "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
