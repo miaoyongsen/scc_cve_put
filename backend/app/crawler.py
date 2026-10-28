@@ -197,7 +197,8 @@ def collect_script(script_id:int):
             # Shared persistence and CVE grouping; separate collection execution.
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
             notify=upsert(db,normalized,content_type=="vulnerability")
-            if content_type!="vulnerability":notify=False
+            # Security articles are eligible for push; review-only articles stay pending.
+            if content_type=="article_review":notify=False
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review:
