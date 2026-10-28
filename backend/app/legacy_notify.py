@@ -73,14 +73,17 @@ def send_vulnerability(item, ai_enabled=None):
     """Returns individual channel results; errors are raised for callers to log."""
     from .push_config import current
     c=current()
-    if c["severity_filter"] and item.get("severity") not in c["severity_filter"]:return {}
-    sources=[x.strip().casefold() for x in c["source_filter"].split(",") if x.strip()]
-    if sources and (item.get("from") or "").casefold() not in sources:return {}
-    from datetime import datetime
-    if c["quiet_start"] and c["quiet_end"]:
-        now=datetime.now().strftime("%H:%M")
-        start,end=c["quiet_start"],c["quiet_end"]
-        if (start<=now<end if start<end else now>=start or now<end):return {}
+    is_article=item.get("content_type") in ("article","article_review")
+    # Security articles bypass vulnerability-only severity, source and quiet-hour filters.
+    if not is_article:
+        if c["severity_filter"] and item.get("severity") not in c["severity_filter"]:return {}
+        sources=[x.strip().casefold() for x in c["source_filter"].split(",") if x.strip()]
+        if sources and (item.get("from") or "").casefold() not in sources:return {}
+        from datetime import datetime
+        if c["quiet_start"] and c["quiet_end"]:
+            now=datetime.now().strftime("%H:%M")
+            start,end=c["quiet_start"],c["quiet_end"]
+            if (start<=now<end if start<end else now>=start or now<end):return {}
     # Single-threaded delivery: analyze first, then send one combined message.
     # AI is limited to vulnerability intelligence with a valid CVE and global switch.
     import logging
