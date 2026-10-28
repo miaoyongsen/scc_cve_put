@@ -1,7 +1,7 @@
 <template>
 <div style="max-width:1200px;margin:28px auto;padding:20px">
 <n-space justify="space-between" align="center"><h2>采集运行记录</h2><n-button @click="load">刷新</n-button></n-space>
-<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看本次 RSS / Python 来源、HTTP 状态码、CVE 数量、重复内容、一级/二级情报及实际推送结果。不同采集入口各自记录一次运行。</n-alert>
+<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看本次 RSS / Python 来源、HTTP 状态码、CVE 数量、重复内容、一级/二级情报及实际推送结果。手动刷新和定时采集统一执行 RSS + Python 爬虫，生成一条汇总记录；单独运行爬虫仍独立记录。</n-alert>
 <n-data-table :columns="columns" :data="rows" :loading="loading" :pagination="false" :row-key="r=>r.id"/>
 <n-space justify="end" style="margin-top:14px"><n-pagination v-model:page="page" :page-size="20" :item-count="total" @update:page="load"/></n-space>
 <n-modal v-model:show="visible" preset="card" title="本次运行详情" style="width:1000px;max-width:96vw">
