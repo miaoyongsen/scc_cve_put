@@ -24,6 +24,7 @@ from .core import engine
 from .settings import IntelSource
 from .worker import matches, upsert
 from .legacy_notify import send_vulnerability
+from .core import log_run
 
 log = logging.getLogger(__name__)
 CVE_PATTERN = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
@@ -220,12 +221,17 @@ def collect_configured_sources(progress=None):
                         db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=manual))
                         db.commit()
                         notify=False
+                log_run(item,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),matched or "")
                 if notify:
                     try:
                         result=send_vulnerability(item,ai_enabled=new_cve)
                         if result and any(result.values()):
                             summary["notifications"]+=1
-                    except Exception:
+                            log_run(item,tier,"推送成功")
+                        else:
+                            log_run(item,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
+                    except Exception as exc:
+                        log_run(item,tier,"推送失败",str(exc))
                         log.exception("Notification failed for %s",item["key"])
                         summary["errors"].append(f"{name}: notification failed")
             detail["status"]="done"
