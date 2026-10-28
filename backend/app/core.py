@@ -68,6 +68,35 @@ class RunRecord(Base):
     status: Mapped[str]=mapped_column(String(30),default="")
     detail: Mapped[str]=mapped_column(Text,default="")
     url: Mapped[str]=mapped_column(Text,default="")
+    run_id: Mapped[int]=mapped_column(Integer,nullable=True,index=True)
+
+class CollectionRun(Base):
+    __tablename__="collection_runs"
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    started_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    ended_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),nullable=True)
+    mode: Mapped[str]=mapped_column(String(30),default="")
+    status: Mapped[str]=mapped_column(String(30),default="running")
+    summary: Mapped[str]=mapped_column(Text,default="{}")
+
+from contextvars import ContextVar
+_active_run=ContextVar("collection_run_id",default=None)
+
+def begin_run(mode):
+    with Session(engine) as db:
+        row=CollectionRun(mode=mode)
+        db.add(row);db.commit();db.refresh(row)
+        return row.id
+
+def finish_run(run_id,status,summary):
+    import json
+    with Session(engine) as db:
+        row=db.get(CollectionRun,run_id)
+        if row:
+            row.ended_at=datetime.now(timezone.utc)
+            row.status=status
+            row.summary=json.dumps(summary,ensure_ascii=False,default=str)
+            db.commit()
 
 def log_run(item,tier,status,detail=""):
     import logging
@@ -77,13 +106,16 @@ def log_run(item,tier,status,detail=""):
         with Session(engine) as db:
             db.add(RunRecord(source=str(item.get("from") or item.get("source") or "")[:120],
                 title=str(item.get("title") or "")[:500],cve=str(item.get("cve") or "")[:50],
-                tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000]))
+                tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000],run_id=_active_run.get()))
             db.commit()
     except Exception:
         logging.getLogger(__name__).exception("Failed to save run history")
 
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
+if "run_id" not in {c["name"] for c in inspect(engine).get_columns("run_records")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE run_records ADD COLUMN run_id INTEGER"))
 if "content_type" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN content_type VARCHAR(30) NOT NULL DEFAULT 'vulnerability'"))
@@ -98,6 +130,31 @@ def serialize(v):
     import json
     return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
 
+
+
+@app.get("/api/v1/collection-runs",dependencies=[Depends(auth)])
+def collection_runs(page:int=1,size:int=20):
+    import json
+    page=max(1,page);size=min(100,max(1,size))
+    with Session(engine) as db:
+        total=db.scalar(select(func.count()).select_from(CollectionRun))
+        runs=db.scalars(select(CollectionRun).order_by(CollectionRun.id.desc()).offset((page-1)*size).limit(size)).all()
+        return {"code":0,"data":{"total":total,"page":page,"list":[{
+            "id":r.id,"started_at":r.started_at,"ended_at":r.ended_at,
+            "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}")
+        } for r in runs]}}
+
+@app.get("/api/v1/collection-runs/{run_id}",dependencies=[Depends(auth)])
+def collection_run_detail(run_id:int):
+    import json
+    with Session(engine) as db:
+        r=db.get(CollectionRun,run_id)
+        if not r:raise HTTPException(404,"运行记录不存在")
+        rows=db.scalars(select(RunRecord).where(RunRecord.run_id==run_id).order_by(RunRecord.id)).all()
+        return {"code":0,"data":{"id":r.id,"started_at":r.started_at,"ended_at":r.ended_at,
+            "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}"),
+            "items":[{"id":x.id,"source":x.source,"title":x.title,"cve":x.cve,
+                "tier":x.tier,"status":x.status,"detail":x.detail,"url":x.url} for x in rows]}}
 
 @app.get("/api/v1/run-records", dependencies=[Depends(auth)])
 def list_run_records(page:int=1,size:int=30,tier:str="",status:str="",q:str=""):
