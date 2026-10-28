@@ -10,6 +10,7 @@ class CollectionConfig(Base):
     __tablename__="collection_config"
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
     interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
+    article_interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
     allowed_severities: Mapped[str]=mapped_column(String(200),default='严重,高危,中危,低危,未知',nullable=False)
     review_keywords: Mapped[str]=mapped_column(String(3000),default='',nullable=False)
     lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
@@ -17,6 +18,10 @@ class CollectionConfig(Base):
 Base.metadata.create_all(engine)
 # Add column to existing SQLite installations without deleting settings.
 from sqlalchemy import inspect, text
+if 'article_interval_minutes' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE collection_config ADD COLUMN article_interval_minutes INTEGER NOT NULL DEFAULT 60"))
+
 if 'whitelist' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE collection_config ADD COLUMN whitelist VARCHAR(2000) NOT NULL DEFAULT ''"))
@@ -58,9 +63,15 @@ def interval_minutes():
         row=db.get(CollectionConfig,1)
         return row.interval_minutes if row and row.interval_minutes in ALLOWED_INTERVALS else 60
 
+def article_interval_minutes():
+    with Session(engine) as db:
+        row=db.get(CollectionConfig,1)
+        return row.article_interval_minutes if row and row.article_interval_minutes in ALLOWED_INTERVALS else 60
+
 router=APIRouter(prefix="/api/v1/settings/collection",dependencies=[Depends(auth)])
 class CollectionInput(BaseModel):
     interval_minutes: int=Field(default=60)
+    article_interval_minutes: int=Field(default=60)
     whitelist: str=Field(default='',max_length=2000)
     lookback_hours: int=Field(default=24)
     review_keywords: str=Field(default='',max_length=3000)
@@ -69,14 +80,14 @@ class CollectionInput(BaseModel):
 @router.get("")
 def get_collection():
     with Session(engine) as db:
-        return {"code":0,"data":{"interval_minutes":interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
+        return {"code":0,"data":{"interval_minutes":interval_minutes(),"article_interval_minutes":article_interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
 
 @router.put("")
 def set_collection(body:CollectionInput):
     from fastapi import HTTPException
     if body.lookback_hours not in (0,24,72,168,720):
         raise HTTPException(422,'Unsupported time range')
-    if body.interval_minutes not in ALLOWED_INTERVALS:
+    if body.interval_minutes not in ALLOWED_INTERVALS or body.article_interval_minutes not in ALLOWED_INTERVALS:
         raise HTTPException(422,"Unsupported interval")
     normalized=list(dict.fromkeys(x.strip() for x in body.allowed_severities))
     if any(x not in ("严重","高危","中危","低危","未知") for x in normalized):
@@ -87,6 +98,7 @@ def set_collection(body:CollectionInput):
             row=CollectionConfig(id=1)
             db.add(row)
         row.interval_minutes=body.interval_minutes
+        row.article_interval_minutes=body.article_interval_minutes
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
         row.review_keywords=body.review_keywords
@@ -94,4 +106,4 @@ def set_collection(body:CollectionInput):
         db.commit()
     from .scheduler import wakeup
     wakeup()
-    return {"code":0,"data":{"interval_minutes":body.interval_minutes},"message":"success"}
+    return {"code":0,"data":{"interval_minutes":body.interval_minutes,"article_interval_minutes":body.article_interval_minutes},"message":"success"}
