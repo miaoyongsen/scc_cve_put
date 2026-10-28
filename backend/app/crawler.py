@@ -149,7 +149,7 @@ def test_script(script_id:int):
     return {"code":0,"data":run_script(code,strict=False)}
 
 @router.post("/{script_id}/collect")
-def collect_script(script_id:int):
+def _collect_script(script_id:int):
     with Session(engine) as db:
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
@@ -171,6 +171,9 @@ def collect_script(script_id:int):
     filtered=0
     notified=0
     notification_errors=[]
+    duplicates=[]
+    pushed=[]
+    pending=[]
     collection_time=datetime.now().astimezone().isoformat(timespec="seconds")
     for item in result["items"]:
         source=(item.get("source") or "").strip() or script_name
@@ -192,6 +195,7 @@ def collect_script(script_id:int):
                 db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
                 inserted+=1
             else:
+                duplicates.append({"title":item["title"],"cve":item["cve"],"reason":"相同 URL 已采集"})
                 old.cve=item["cve"]
                 old.title=item["title"]
                 old.severity=item["severity"]
@@ -213,6 +217,7 @@ def collect_script(script_id:int):
             primary+=1
         elif tier=="secondary":
             secondary+=1
+        if tier=="secondary":pending.append({"title":item["title"],"cve":item["cve"]})
         log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),keyword or "")
         if notify:
             try:
@@ -220,6 +225,7 @@ def collect_script(script_id:int):
                 if outcome and any(outcome.values()):
                     notified+=1
                     log_run(normalized,tier,"推送成功")
+                    pushed.append({"title":item["title"],"cve":item["cve"]})
                 else:
                     log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
             except Exception as exc:
@@ -228,11 +234,31 @@ def collect_script(script_id:int):
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],
             "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
-            "stderr":result["stderr"]}}
+            "duplicates":duplicates,"pushed":pushed,"pending":pending,"stderr":result["stderr"]}}
+
+def collect_script(script_id:int):
+    from .core import _active_run,begin_run,finish_run
+    existing=_active_run.get()
+    if existing:return _collect_script(script_id)
+    run_id=begin_run("Python 爬虫")
+    token=_active_run.set(run_id)
+    try:
+        result=_collect_script(script_id)
+        finish_run(run_id,"部分失败" if result["data"]["notification_errors"] else "完成",
+                   {"details":[{"name":str(script_id),"adapter":"python","http_status":None,**result["data"]}]})
+        return result
+    except Exception as exc:
+        finish_run(run_id,"失败",{"error":str(exc),"details":[{"name":str(script_id),"adapter":"python","status":"error","error":str(exc)}]})
+        raise
+    finally:
+        _active_run.reset(token)
 
 @router.post("/collect-all")
 def collect_all_scripts():
     """Run every configured Python crawler; a failure does not stop other scripts."""
+    from .core import _active_run,begin_run,finish_run
+    run_id=begin_run("全部 Python 爬虫")
+    token=_active_run.set(run_id)
     with Session(engine) as db:
         ids=[x.id for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]
     details=[]
@@ -242,6 +268,8 @@ def collect_all_scripts():
             details.append({"id":script_id,"ok":True,**result})
         except Exception as exc:
             details.append({"id":script_id,"ok":False,"error":str(exc)[:500]})
+    finish_run(run_id,"完成" if all(x["ok"] for x in details) else "部分失败",{"details":details})
+    _active_run.reset(token)
     return {"code":0,"data":{"total":len(details),"success":sum(x["ok"] for x in details),"details":details}}
 
 @router.get("/findings")
