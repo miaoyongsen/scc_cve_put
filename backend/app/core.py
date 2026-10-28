@@ -245,9 +245,18 @@ class BulkDeleteInput(BaseModel):
 @app.post("/api/v1/vulnerabilities/bulk-delete", dependencies=[Depends(auth)])
 def bulk_delete_vulnerabilities(body: BulkDeleteInput):
     from .review import Review
+    from .crawler import CrawlerFinding
     ids=set(body.ids)
     with Session(engine) as db:
         from sqlalchemy import delete
+        rows=db.scalars(select(Vulnerability).where(Vulnerability.id.in_(ids))).all()
+        for row in rows:
+            if row.key.startswith("crawler:"):continue
+            # Crawler keys are hashes of script id and URL; remove matching raw findings.
+            for finding in db.scalars(select(CrawlerFinding)).all():
+                import hashlib
+                if row.key==hashlib.sha256(("crawler:"+str(finding.script_id)+":"+finding.url).encode()).hexdigest():
+                    db.delete(finding)
         db.execute(delete(Review).where(Review.vulnerability_id.in_(ids)))
         result=db.execute(delete(Vulnerability).where(Vulnerability.id.in_(ids)))
         db.commit()
