@@ -164,7 +164,7 @@ def collect_script(script_id:int):
     from .review import Review
     from .worker import upsert
     from .legacy_notify import send_vulnerability
-from .core import log_run
+    from .core import log_run
     inserted=0
     primary=0
     secondary=0
