@@ -16,13 +16,18 @@ class PushConfig(Base):
     quiet_end:Mapped[str]=mapped_column(String(5),default="")
     dedup_hours:Mapped[int]=mapped_column(Integer,default=0)
     message_template:Mapped[str]=mapped_column(String(8000),default="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})")
+    article_template:Mapped[str]=mapped_column(String(8000),default="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})")
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
 if "message_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE push_config ADD COLUMN message_template VARCHAR(8000)"))
+if "article_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE push_config ADD COLUMN article_template VARCHAR(8000)"))
 router=APIRouter(prefix="/api/v1/settings/push",dependencies=[Depends(auth)])
 class PushInput(BaseModel):
+    article_template:str=DEFAULT_ARTICLE_TEMPLATE
     wecom_enabled:bool=False
     wecom_webhook:str=""
     severity_filter:list[str]=[]
@@ -32,12 +37,14 @@ class PushInput(BaseModel):
     dedup_hours:int=0
     message_template:str="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
+DEFAULT_ARTICLE_TEMPLATE="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
+
 DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **等级**：{severity}\\n> **来源**：{source}\\n> **披露日期**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 
 def current():
     with Session(engine) as db:
         row=db.get(PushConfig,1)
-        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE))
+        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE),article_template=(row.article_template if row and row.article_template else DEFAULT_ARTICLE_TEMPLATE))
 
 @router.get("")
 def get_config():
@@ -69,6 +76,8 @@ def save_config(body:PushInput):
         row.dedup_hours=body.dedup_hours
         if len(body.message_template)>8000:raise HTTPException(422,"模板过长")
         row.message_template=body.message_template
+        if len(body.article_template)>8000:raise HTTPException(422,"文章模板过长")
+        row.article_template=body.article_template
         db.commit()
     return {"code":0,"message":"saved"}
 
