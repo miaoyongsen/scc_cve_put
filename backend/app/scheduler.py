@@ -19,24 +19,28 @@ def wakeup():
 
 def loop():
     global last_run,last_result
-    from .collection_config import interval_minutes
+    from .collection_config import interval_minutes, article_interval_minutes
     from .collector import collect_configured_sources
-    next_run=time.monotonic()+interval_minutes()*60
+    intervals={"vulnerability":interval_minutes,"article":article_interval_minutes}
+    next_runs={kind:time.monotonic()+getter()*60 for kind,getter in intervals.items()}
     while not _stop.is_set():
-        remaining=max(0,next_run-time.monotonic())
+        now=time.monotonic()
+        remaining=max(0,min(next_runs.values())-now)
         if _changed.wait(timeout=min(remaining,1)):
             _changed.clear()
-            next_run=time.monotonic()+interval_minutes()*60
+            next_runs={kind:time.monotonic()+getter()*60 for kind,getter in intervals.items()}
             continue
         if _stop.is_set():break
-        if time.monotonic()<next_run:continue
-        try:
-            last_result=collect_configured_sources()
-            last_run=datetime.now(timezone.utc).isoformat()
-            log.info("RSS collection completed: %s",last_result)
-        except Exception:
-            log.exception("RSS collection failed")
-        next_run=time.monotonic()+interval_minutes()*60
+        for kind,getter in intervals.items():
+            if time.monotonic()<next_runs[kind]:continue
+            try:
+                last_result=collect_configured_sources(mode=kind)
+                last_run=datetime.now(timezone.utc).isoformat()
+                log.info("%s collection completed: %s",kind,last_result)
+            except Exception:
+                log.exception("%s collection failed",kind)
+            finally:
+                next_runs[kind]=time.monotonic()+getter()*60
 
 @asynccontextmanager
 async def lifespan(app):
