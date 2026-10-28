@@ -9,11 +9,13 @@ import Sources from './views/Sources.vue'
 import PushSettings from './views/PushSettings.vue'
 import AISettings from './views/AISettings.vue'
 import SkillSettings from './views/SkillSettings.vue'
+import RunRecords from './views/RunRecords.vue'
 const router = createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:Login},
 {path:'/',redirect:'/vulnerabilities'},
 {path:'/vulnerabilities',component:Vulnerabilities},
 {path:'/sources',component:Sources},
+{path:'/run-records',component:RunRecords},
 {path:'/push-settings',component:PushSettings},
 {path:'/ai-settings',component:AISettings},
 {path:'/skill-settings',component:SkillSettings}
