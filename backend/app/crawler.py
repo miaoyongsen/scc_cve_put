@@ -178,7 +178,7 @@ def _collect_script(script_id:int):
     for item in result["items"]:
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
-        tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else (("secondary","安全文章",None) if content_type=="article_review" else ("article",None,None))
+        tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
         if rejected:
             filtered+=1
             continue
@@ -203,13 +203,14 @@ def _collect_script(script_id:int):
             # Shared persistence and CVE grouping; separate collection execution.
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
             notify=upsert(db,normalized,content_type=="vulnerability")
-            # Security articles are eligible for push; review-only articles stay pending.
-            if content_type=="article_review":notify=False
+            # Articles are delivered once on first discovery, independent of severity/tier.
+            if content_type in ("article","article_review"):
+                notify=old is None
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
-            if review:
+            if review and content_type=="vulnerability":
                 notify=False
-            elif tier=="secondary":
+            elif tier=="secondary" and content_type=="vulnerability":
                 db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or ""))
                 db.commit()
                 notify=False
