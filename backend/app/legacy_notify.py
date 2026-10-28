@@ -12,9 +12,9 @@ def format_wecom(item):
     """Render the UI-managed template with a fixed, safe placeholder set."""
     import re
     from .push_config import current
-    template=current()["message_template"]
-    if item.get("content_type") in ("article","article_review"):
-        template=template.replace("WatchVuln 漏洞情报","WatchVuln 安全文章")
+    config=current()
+    is_article=item.get("content_type") in ("article","article_review")
+    template=config["article_template"] if is_article else config["message_template"]
     fields={
         "title":item.get("title"),"cve":item.get("cve"),
         "severity":item.get("severity"),"source":item.get("from") or item.get("source"),
@@ -36,7 +36,7 @@ def format_wecom(item):
         fields["severity"]=badge+" "+severity
     for key,value in fields.items():
         template=template.replace("{"+key+"}",dash(value))
-    if "{url}" not in current()["message_template"] and fields["url"]:
+    if "{url}" not in (config["article_template"] if is_article else config["message_template"]) and fields["url"]:
         template+="\n> **原始数据**：[查看原文]("+str(fields["url"])+")"
     return template
 
