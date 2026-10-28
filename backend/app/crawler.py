@@ -170,6 +170,7 @@ def collect_script(script_id:int):
     filtered=0
     notified=0
     notification_errors=[]
+    collection_time=datetime.now().astimezone().isoformat(timespec="seconds")
     for item in result["items"]:
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
@@ -180,7 +181,7 @@ def collect_script(script_id:int):
         key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
         normalized={"key":key,"title":item["title"],"description":item.get("description") or "",
                     "severity":item["severity"],"cve":item["cve"],
-                    "disclosure":item.get("disclosure") or "",
+                    "disclosure":collection_time if content_type in ("article","article_review") else (item.get("disclosure") or ""),
                     "solutions":item.get("solutions") or "",
                     "references":[item["url"]],"tags":item.get("tags") or [],
                     "from":source,"reason":[],"content_type":content_type}
