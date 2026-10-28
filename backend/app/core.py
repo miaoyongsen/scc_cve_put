@@ -56,6 +56,29 @@ class Vulnerability(Base):
     content_type: Mapped[str] = mapped_column(String(30), default="vulnerability", nullable=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+class RunRecord(Base):
+    __tablename__="run_records"
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+    source: Mapped[str]=mapped_column(String(120),default="")
+    title: Mapped[str]=mapped_column(String(500),default="")
+    cve: Mapped[str]=mapped_column(String(50),default="")
+    tier: Mapped[str]=mapped_column(String(30),default="")
+    status: Mapped[str]=mapped_column(String(30),default="")
+    detail: Mapped[str]=mapped_column(Text,default="")
+    url: Mapped[str]=mapped_column(Text,default="")
+
+def log_run(item,tier,status,detail=""):
+    import json
+    refs=item.get("references") or []
+    url=item.get("url") or (refs[0] if isinstance(refs,list) and refs else "")
+    with Session(engine) as db:
+        db.add(RunRecord(source=str(item.get("from") or item.get("source") or "")[:120],
+            title=str(item.get("title") or "")[:500],cve=str(item.get("cve") or "")[:50],
+            tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000]))
+        db.commit()
+
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
 if "content_type" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
@@ -71,6 +94,21 @@ def auth(authorization: Optional[str] = Header(None)):
 def serialize(v):
     import json
     return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
+
+
+@app.get("/api/v1/run-records", dependencies=[Depends(auth)])
+def list_run_records(page:int=1,size:int=30,tier:str="",status:str="",q:str=""):
+    page=max(page,1);size=min(max(size,1),100)
+    with Session(engine) as db:
+        stmt=select(RunRecord)
+        if tier:stmt=stmt.where(RunRecord.tier==tier)
+        if status:stmt=stmt.where(RunRecord.status==status)
+        if q:stmt=stmt.where(or_(RunRecord.title.contains(q),RunRecord.cve.contains(q),RunRecord.source.contains(q)))
+        total=db.scalar(select(func.count()).select_from(stmt.subquery()))
+        rows=db.scalars(stmt.order_by(RunRecord.id.desc()).offset((page-1)*size).limit(size)).all()
+        return {"code":0,"data":{"total":total,"page":page,"size":size,"list":[{
+            "id":x.id,"created_at":x.created_at,"source":x.source,"title":x.title,
+            "cve":x.cve,"tier":x.tier,"status":x.status,"detail":x.detail,"url":x.url} for x in rows]}}
 
 @app.get("/api/v1/vulnerabilities", dependencies=[Depends(auth)])
 def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:str="",grouped:bool=False,sort_by:str="disclosure",sort_order:str="desc"):
