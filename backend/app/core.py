@@ -70,14 +70,17 @@ class RunRecord(Base):
     url: Mapped[str]=mapped_column(Text,default="")
 
 def log_run(item,tier,status,detail=""):
-    import json
-    refs=item.get("references") or []
-    url=item.get("url") or (refs[0] if isinstance(refs,list) and refs else "")
-    with Session(engine) as db:
-        db.add(RunRecord(source=str(item.get("from") or item.get("source") or "")[:120],
-            title=str(item.get("title") or "")[:500],cve=str(item.get("cve") or "")[:50],
-            tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000]))
-        db.commit()
+    import logging
+    try:
+        refs=item.get("references") or []
+        url=item.get("url") or (refs[0] if isinstance(refs,list) and refs else "")
+        with Session(engine) as db:
+            db.add(RunRecord(source=str(item.get("from") or item.get("source") or "")[:120],
+                title=str(item.get("title") or "")[:500],cve=str(item.get("cve") or "")[:50],
+                tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000]))
+            db.commit()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to save run history")
 
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
