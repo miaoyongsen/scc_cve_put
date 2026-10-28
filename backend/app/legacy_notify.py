@@ -26,13 +26,16 @@ def format_wecom(item):
     # Normalize templates saved by older versions that stored literal backslash-n.
     template=template.replace(chr(92)+"n", "\n")
     severity=dash(fields["severity"])
+    if is_article:
+        fields["cve"]=item.get("cve") or ""
+        fields["severity"]=item.get("severity") or ""
     # WeCom robot markdown supports warning/info/comment, not arbitrary hex colors.
     # Emoji distinguishes critical red from high orange on all clients.
     severity_badges={"严重":"🔴","高危":"🟠","中危":"🟡","低危":"🟢","未知":"⚪"}
     badge=severity_badges.get(severity,"⚪")
-    if severity in ("严重","高危"):
+    if not is_article and severity in ("严重","高危"):
         fields["severity"]=badge+' <font color="warning">'+severity+'</font>'
-    else:
+    elif not is_article:
         fields["severity"]=badge+" "+severity
     for key,value in fields.items():
         template=template.replace("{"+key+"}",dash(value))
