@@ -9,6 +9,13 @@ _send_lock = threading.Lock()
 _last_send_started = None
 
 def send_wecom_markdown(text: str, url=None):
+    return _send_wecom({"msgtype":"markdown","markdown":{"content":text}},url)
+
+def send_wecom_text(text: str, url=None):
+    """Independent plain-text transport for operational alerts."""
+    return _send_wecom({"msgtype":"text","text":{"content":text}},url)
+
+def _send_wecom(payload, url=None):
     global _last_send_started
     url = url or os.getenv("WECHAT_WEBHOOK_URL", "")
     if not url:
@@ -24,7 +31,7 @@ def send_wecom_markdown(text: str, url=None):
                 time.sleep(remaining)
         _last_send_started=time.monotonic()
         with httpx.Client(timeout=15) as client:
-            response=client.post(url,json={"msgtype":"markdown","markdown":{"content":text}})
+            response=client.post(url,json=payload)
             response.raise_for_status()
             data=response.json()
             if data.get("errcode") != 0:
