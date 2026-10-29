@@ -1,7 +1,5 @@
 """Conservative SQLite log archiving: never touches intelligence, dedup or settings."""
-import calendar
 import logging
-import os
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -91,6 +89,14 @@ def archive_logs():
                             [tuple(row[k] for k in ("id","created_at","source","title","cve","tier","status","detail","url","run_id")) for row in records])
                         # Commit archive first. If deletion fails, retry safely re-copies IDs.
                         target.commit()
+                        copied_runs=target.execute("SELECT COUNT(*) FROM collection_runs WHERE id IN ("+",".join("?" for _ in run_ids)+")",run_ids).fetchone()[0]
+                        if copied_runs!=len(run_ids):
+                            raise RuntimeError("Archive verification failed: missing collection runs")
+                        if records:
+                            record_ids=[record["id"] for record in records]
+                            copied_records=target.execute("SELECT COUNT(*) FROM run_records WHERE id IN ("+",".join("?" for _ in record_ids)+")",record_ids).fetchone()[0]
+                            if copied_records!=len(record_ids):
+                                raise RuntimeError("Archive verification failed: missing run records")
                         for rid in run_ids:
                             conn.execute(text("DELETE FROM run_records WHERE run_id=:id"),{"id":rid})
                             conn.execute(text("DELETE FROM collection_runs WHERE id=:id"),{"id":rid})
