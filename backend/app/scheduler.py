@@ -37,8 +37,13 @@ def loop():
                 last_result=collect_configured_sources(mode=kind)
                 last_run=datetime.now(timezone.utc).isoformat()
                 log.info("%s collection completed: %s",kind,last_result)
-            except Exception:
+            except Exception as exc:
                 log.exception("%s collection failed",kind)
+                try:
+                    from .error_alert import send_error_alert
+                    send_error_alert(kind+" 定时采集",str(exc))
+                except Exception:
+                    log.exception("Failed to notify scheduled collection error")
             finally:
                 next_runs[kind]=time.monotonic()+getter()*60
 
