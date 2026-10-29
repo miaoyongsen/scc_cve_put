@@ -23,8 +23,8 @@ def format_wecom(item):
     }
     refs=item.get("references")
     if not fields["url"] and isinstance(refs,list) and refs:fields["url"]=refs[0]
-    # Normalize templates saved by older versions that stored literal backslash-n.
-    # Handle real newlines and literal escaped \\n / \\\\n from older saved templates.\n    template=re.sub(r"(?:\\\\)+n", "\\n", template)
+    # Convert literal \n (including double-escaped forms) into real line breaks.
+    template=re.sub(r"(?:\\)+n", "\n", template)
     severity=dash(fields["severity"])
     if is_article:
         fields["cve"]=item.get("cve") or ""
