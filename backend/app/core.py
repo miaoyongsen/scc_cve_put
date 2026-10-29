@@ -90,6 +90,7 @@ def begin_run(mode):
 
 def finish_run(run_id,status,summary):
     import json
+    import logging
     with Session(engine) as db:
         row=db.get(CollectionRun,run_id)
         if row:
@@ -97,6 +98,13 @@ def finish_run(run_id,status,summary):
             row.status=status
             row.summary=json.dumps(summary,ensure_ascii=False,default=str)
             db.commit()
+    logging.getLogger(__name__).info("collection_run_event %s",json.dumps({
+        "event":"collection_run_finished","run_id":run_id,"status":status,
+        "items":summary.get("items",0),"new":summary.get("new",0),
+        "notifications":summary.get("notifications",0),
+        "errors":len(summary.get("errors") or []),
+        "sources":summary.get("sources",0)
+    },ensure_ascii=False,default=str))
     if status in ("失败","部分失败"):
         try:
             from .error_alert import alert_run_errors
