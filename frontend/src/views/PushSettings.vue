@@ -11,7 +11,7 @@
 <n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
-<n-card title="异常告警机器人（独立推送）" style="margin-bottom:16px">
+<n-card id="error-wecom-editor" title="异常告警机器人（独立推送）" style="margin-bottom:16px">
 <n-alert type="info" style="margin-bottom:12px">采集失败、接口无法访问、爬虫报错、推送异常时发送错误详情，不发送普通情报。</n-alert>
 <n-space align="center"><span>启用异常告警</span><n-switch v-model:value="form.error_wecom_enabled"/></n-space>
 <n-form-item label="异常机器人 Webhook（留空保留已保存密钥）"><n-input v-model:value="form.error_wecom_webhook" type="password" show-password-on="click" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
@@ -31,8 +31,14 @@ import {ref,computed,onMounted,h} from 'vue'
 import axios from 'axios'
 import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCheckboxGroup,NDataTable,useMessage} from 'naive-ui'
 const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),hasErrorWebhook=ref(false),testingError=ref(false),levels=['严重','高危','中危','低危','未知']
-const savedRows=computed(()=>hasWebhook.value?[{id:1,name:'企业微信默认机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）'}]:[])
-const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:()=>h(NButton,{size:'small',onClick:()=>document.getElementById('wecom-editor')?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
+const savedRows=computed(()=>{
+  const rows=[]
+  if(hasWebhook.value)rows.push({id:1,name:'企业微信情报机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）',target:'wecom-editor'})
+  if(hasErrorWebhook.value)rows.push({id:2,name:'企业微信异常告警机器人',status:form.value.error_wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）',target:'error-wecom-editor'})
+  return rows
+})
+const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:row=>h(NButton,{size:'small',onClick:()=>document.getElementById(row.target)?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
+
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const defaultArticleTemplate="## WatchVuln 安全文章\n> **标题**：{title}\n> **CVE**：{cve}\n> **危害等级**：{severity}\n> **来源**：{source}\n> **采集时间**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
