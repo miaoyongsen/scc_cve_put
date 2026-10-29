@@ -97,6 +97,13 @@ def finish_run(run_id,status,summary):
             row.status=status
             row.summary=json.dumps(summary,ensure_ascii=False,default=str)
             db.commit()
+    if status in ("失败","部分失败"):
+        try:
+            from .error_alert import alert_run_errors
+            alert_run_errors(row.mode if row else "采集任务",status,summary)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Error alert processing failed")
 
 def log_run(item,tier,status,detail=""):
     import logging
