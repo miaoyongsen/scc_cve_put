@@ -23,12 +23,12 @@
 import {ref,computed,onMounted,h} from 'vue'
 import axios from 'axios'
 import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCheckboxGroup,NDataTable,useMessage} from 'naive-ui'
-const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),levels=['严重','高危','中危','低危','未知']
+const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),hasErrorWebhook=ref(false),testingError=ref(false),levels=['严重','高危','中危','低危','未知']
 const savedRows=computed(()=>hasWebhook.value?[{id:1,name:'企业微信默认机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）'}]:[])
 const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:()=>h(NButton,{size:'small',onClick:()=>document.getElementById('wecom-editor')?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const defaultArticleTemplate="## WatchVuln 安全文章\n> **标题**：{title}\n> **CVE**：{cve}\n> **危害等级**：{severity}\n> **来源**：{source}\n> **采集时间**：{disclosure}\n> **原始数据**：[查看原文]({url})"
-const form=ref({wecom_enabled:false,wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
+const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
 function resetArticleTemplate(){form.value.article_template=defaultArticleTemplate}
 const articlePreview=computed(()=>{const sample={title:"示例安全文章",cve:"CVE-2026-12345",severity:"高危",source:"安全研究团队",disclosure:"2026-10-28 08:38:00",description:"文章摘要",url:"https://example.com"};let result=(form.value.article_template||"").split(String.fromCharCode(92)+"n").join(String.fromCharCode(10));for(const [key,value] of Object.entries(sample))result=result.split("{"+key+"}").join(value);return result})
 function resetTemplate(){form.value.message_template=defaultTemplate}
@@ -47,8 +47,9 @@ await axios.put(url,body,{headers:authHeaders()});row.ai_enabled=value;msg.succe
 }catch(e){msg.error(e.response?.data?.detail||e.message)}}
 const http=axios.create({baseURL:'/api/v1/settings/push'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
-async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;form.value={...form.value,...d,wecom_webhook:''}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
+async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;hasErrorWebhook.value=d.has_error_webhook;form.value={...form.value,...d,wecom_webhook:'',error_wecom_webhook:''}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
 async function save(){saving.value=true;try{await http.put('',form.value);msg.success('配置已保存');await load()}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{saving.value=false}}
 async function test(){testing.value=true;try{await http.post('/test');msg.success('测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testing.value=false}}
+async function testError(){testingError.value=true;try{await http.post('/test-error');msg.success('异常测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testingError.value=false}}
 onMounted(()=>{load();loadSources()})
 </script>
