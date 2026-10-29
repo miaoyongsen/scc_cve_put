@@ -10,6 +10,8 @@ class PushConfig(Base):
     id:Mapped[int]=mapped_column(Integer,primary_key=True)
     wecom_enabled:Mapped[bool]=mapped_column(Boolean,default=False)
     wecom_webhook:Mapped[str]=mapped_column(String(1000),default="")
+    error_wecom_enabled:Mapped[bool]=mapped_column(Boolean,default=False)
+    error_wecom_webhook:Mapped[str]=mapped_column(String(1000),default="")
     severity_filter:Mapped[str]=mapped_column(String(200),default="")
     source_filter:Mapped[str]=mapped_column(String(2000),default="")
     quiet_start:Mapped[str]=mapped_column(String(5),default="")
@@ -25,11 +27,17 @@ if "message_template" not in {c["name"] for c in inspect(engine).get_columns("pu
 if "article_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE push_config ADD COLUMN article_template VARCHAR(8000)"))
+for column,ddl in (("error_wecom_enabled","BOOLEAN NOT NULL DEFAULT 0"),("error_wecom_webhook","VARCHAR(1000) NOT NULL DEFAULT ''")):
+    if column not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE push_config ADD COLUMN "+column+" "+ddl))
 router=APIRouter(prefix="/api/v1/settings/push",dependencies=[Depends(auth)])
 DEFAULT_ARTICLE_TEMPLATE="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **危害等级**：{severity}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 class PushInput(BaseModel):
     article_template:str=DEFAULT_ARTICLE_TEMPLATE
     wecom_enabled:bool=False
+    error_wecom_enabled:bool=False
+    error_wecom_webhook:str=""
     wecom_webhook:str=""
     severity_filter:list[str]=[]
     source_filter:str=""
@@ -44,12 +52,13 @@ DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**
 def current():
     with Session(engine) as db:
         row=db.get(PushConfig,1)
-        return dict(wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE),article_template=(row.article_template if row and row.article_template else DEFAULT_ARTICLE_TEMPLATE))
+        return dict(error_wecom_enabled=bool(row.error_wecom_enabled) if row else False,error_wecom_webhook=row.error_wecom_webhook if row else "",wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE),article_template=(row.article_template if row and row.article_template else DEFAULT_ARTICLE_TEMPLATE))
 
 @router.get("")
 def get_config():
     c=current()
     c["has_webhook"]=bool(c.pop("wecom_webhook"))
+    c["has_error_webhook"]=bool(c.pop("error_wecom_webhook"))
     return {"code":0,"data":c}
 
 @router.put("")
@@ -58,6 +67,8 @@ def save_config(body:PushInput):
     import re
     if body.wecom_webhook and not (body.wecom_webhook.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?") and urlparse(body.wecom_webhook).hostname=="qyapi.weixin.qq.com"):
         raise HTTPException(422,"仅允许企业微信官方机器人 Webhook")
+    if body.error_wecom_webhook and not (body.error_wecom_webhook.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?") and urlparse(body.error_wecom_webhook).hostname=="qyapi.weixin.qq.com"):
+        raise HTTPException(422,"仅允许企业微信官方异常告警机器人 Webhook")
     if any(s not in ("严重","高危","中危","低危","未知") for s in body.severity_filter):
         raise HTTPException(422,"非法等级")
     if body.dedup_hours not in (0,1,6,12,24,72):
@@ -68,6 +79,8 @@ def save_config(body:PushInput):
         row=db.get(PushConfig,1)
         if row is None:row=PushConfig(id=1);db.add(row)
         row.wecom_enabled=body.wecom_enabled
+        row.error_wecom_enabled=body.error_wecom_enabled
+        if body.error_wecom_webhook:row.error_wecom_webhook=body.error_wecom_webhook
         if body.wecom_webhook:row.wecom_webhook=body.wecom_webhook
         row.severity_filter=",".join(body.severity_filter)
         row.source_filter=body.source_filter[:2000]
@@ -93,3 +106,15 @@ def test_push():
     except Exception as exc:
         raise HTTPException(502,str(exc)[:200])
     return {"code":0,"data":{"success":ok}}
+
+@router.post("/test-error")
+def test_error_push():
+    from .error_alert import send_error_alert
+    try:
+        if not send_error_alert("测试告警", "这是异常告警机器人测试消息。", force=True):
+            raise HTTPException(422,"请先启用并保存异常告警机器人 Webhook")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(502,str(exc)[:200])
+    return {"code":0,"data":{"success":True}}
