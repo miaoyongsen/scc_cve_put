@@ -10,6 +10,7 @@ log=logging.getLogger(__name__)
 _stop=threading.Event()
 _changed=threading.Event()
 _thread=None
+_archive_thread=None
 last_run=None
 last_result=None
 
@@ -47,9 +48,29 @@ def loop():
             finally:
                 next_runs[kind]=time.monotonic()+getter()*60
 
+
+def archive_loop():
+    """Daily retention check; independent of AUTO_COLLECT."""
+    from .db_archive import archive_logs
+    while not _stop.is_set():
+        # Run at next local 03:00; avoid maintenance on each app startup.
+        from datetime import timedelta
+        now=datetime.now().astimezone()
+        target=now.replace(hour=3,minute=0,second=0,microsecond=0)
+        if target<=now:target+=timedelta(days=1)
+        if _stop.wait((target-now).total_seconds()):break
+        try:
+            result=archive_logs()
+            log.info("SQLite archive result: %s",result)
+        except Exception:
+            log.exception("Scheduled SQLite archive failed")
+
 @asynccontextmanager
 async def lifespan(app):
-    global _thread
+    global _thread,_archive_thread
+    _stop.clear()
+    _archive_thread=threading.Thread(target=archive_loop,name="sqlite-log-archiver",daemon=True)
+    _archive_thread.start()
     if os.getenv("AUTO_COLLECT","false").lower()=="true":
         _stop.clear()
         _changed.clear()
@@ -61,3 +82,4 @@ async def lifespan(app):
         _stop.set()
         _changed.set()
         if _thread:_thread.join(timeout=5)
+        if _archive_thread:_archive_thread.join(timeout=5)
