@@ -139,6 +139,17 @@ def serialize(v):
 
 
 
+
+@app.get("/api/v1/database/stats",dependencies=[Depends(auth)])
+def database_stats():
+    from .db_archive import stats
+    return {"code":0,"data":stats()}
+
+@app.post("/api/v1/database/archive",dependencies=[Depends(auth)])
+def database_archive():
+    from .db_archive import archive_logs
+    return {"code":0,"data":archive_logs()}
+
 @app.get("/api/v1/collection-runs",dependencies=[Depends(auth)])
 def collection_runs(page:int=1,size:int=20):
     import json
