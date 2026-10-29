@@ -11,6 +11,13 @@
 <n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
+<n-card title="异常告警机器人（独立推送）" style="margin-bottom:16px">
+<n-alert type="info" style="margin-bottom:12px">采集失败、接口无法访问、爬虫报错、推送异常时发送错误详情，不发送普通情报。</n-alert>
+<n-space align="center"><span>启用异常告警</span><n-switch v-model:value="form.error_wecom_enabled"/></n-space>
+<n-form-item label="异常机器人 Webhook（留空保留已保存密钥）"><n-input v-model:value="form.error_wecom_webhook" type="password" show-password-on="click" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
+<n-text depth="3">{{hasErrorWebhook?'已保存异常告警 Webhook（不会回显）':'尚未保存异常告警 Webhook'}}</n-text>
+<n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存异常机器人配置</n-button><n-button :loading="testingError" @click="testError">发送异常测试消息</n-button></n-space>
+</n-card>
 <n-card title="AI 研判联动"><n-alert type="info">只使用 AI 配置中的全局开关，研判完成后与漏洞情报合并为一条消息推送。</n-alert><n-button @click="$router.push('/ai-settings')">AI 研判配置</n-button></n-card><n-card title="推送规则">
 <n-form-item label="允许推送的等级（不勾选表示不限等级）"><n-checkbox-group v-model:value="form.severity_filter"><n-space><n-checkbox v-for="x in levels" :key="x" :value="x" :label="x"/></n-space></n-checkbox-group></n-form-item>
 <n-form-item label="允许推送的来源（英文逗号分隔；留空表示全部来源）"><n-input v-model:value="form.source_filter" placeholder="奇安信,GitHub Advisory"/></n-form-item>
