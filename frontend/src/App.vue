@@ -4,6 +4,7 @@
       <div v-if="$route.path !== '/login'" class="global-nav">
         <strong>SCC CVE</strong>
         <nav>
+          <router-link to="/dashboard">运行看板</router-link>
           <router-link to="/vulnerabilities">漏洞监控</router-link>
           <router-link to="/run-records">运行记录</router-link>
           <router-link to="/sources">情报来源配置</router-link>
