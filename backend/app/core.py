@@ -355,6 +355,9 @@ app.include_router(push_config_router)
 from .ai_config import router as ai_router
 app.include_router(ai_router)
 
+from .dashboard import router as dashboard_router
+app.include_router(dashboard_router)
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
