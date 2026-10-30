@@ -73,7 +73,20 @@ const columns = [
   { title: '原始数据', key: 'raw', width: 100, render: row => rawButton(row) }
 ]
 async function load(){loading.value=true;try{const r=await list({page:page.value,size:pageSize.value,grouped:true,sort_by:sortBy.value,sort_order:sortOrder.value,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;related.value={};total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
-async function open(id){try{selected.value=(await detail(id)).data;show.value=true}catch(e){msg.error(e.message)}}
+async function open(id){
+  try{
+    selected.value=(await detail(id)).data
+    show.value=true
+    aiDetail.value=null
+    if(!selected.value.cve)return
+    aiLoading.value=true
+    try{
+      const response=await axios.get('/api/v1/settings/ai/results/by-cve/'+encodeURIComponent(selected.value.cve),{headers:{Authorization:'Bearer '+localStorage.getItem('token')}})
+      aiDetail.value=response.data.data
+    }catch(e){msg.error('读取 AI 研判失败')}
+    finally{aiLoading.value=false}
+  }catch(e){msg.error(e.message)}
+}
 const showProgress=ref(false),progressStatus=ref('running'),progressSummary=ref({details:[]})
 let progressTimer=null,autoCloseTimer=null
 function closeProgress(){showProgress.value=false;if(autoCloseTimer)clearTimeout(autoCloseTimer)}
