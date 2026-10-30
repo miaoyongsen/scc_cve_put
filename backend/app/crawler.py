@@ -245,17 +245,24 @@ def collect_script(script_id:int):
     from .core import _active_run,begin_run,finish_run
     existing=_active_run.get()
     if existing:return _collect_script(script_id)
+    from .notification_digest import begin_digest,end_digest,flush_digest
     run_id=begin_run("Python 爬虫")
     token=_active_run.set(run_id)
+    digest_token=begin_digest()
     try:
         result=_collect_script(script_id)
+        delivery=flush_digest()
+        result["data"]["notifications"]+=delivery["notifications"]
+        result["data"]["notification_errors"].extend(delivery["errors"])
+        result["data"]["pushed"].extend(delivery["pushed"])
         finish_run(run_id,"部分失败" if result["data"]["notification_errors"] else "完成",
-                   {"details":[{"name":str(script_id),"adapter":"python","http_status":None,**result["data"]}]})
+                   {"details":[{"name":str(script_id),"adapter":"python","http_status":None,"status":"partial" if result["data"]["notification_errors"] else "done",**result["data"]}],"errors":delivery["errors"]})
         return result
     except Exception as exc:
         finish_run(run_id,"失败",{"error":str(exc),"details":[{"name":str(script_id),"adapter":"python","status":"error","error":str(exc)}]})
         raise
     finally:
+        end_digest(digest_token)
         _active_run.reset(token)
 
 @router.post("/collect-all")
