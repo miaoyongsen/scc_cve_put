@@ -207,7 +207,10 @@ def _collect_configured_sources(progress=None):
                 detail["items"]+=1
                 item["from"]=name
                 if item.get("severity")=="未知" and item.get("cve"):
-                    item["severity"]=nvd_severity(item["cve"])
+                    from .core import Vulnerability
+                    with Session(engine) as check_db:
+                        known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
+                    if not known:item["severity"]=nvd_severity(item["cve"])
                 tier,matched,rejected=evaluate(item)
                 if rejected:
                     field={"severity":"filtered_severity","date":"filtered_date",
