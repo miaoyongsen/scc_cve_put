@@ -211,7 +211,9 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
     ordering=(sort_column.asc() if sort_order=="asc" else sort_column.desc()).nullslast()
     with Session(engine) as db:
         stmt=select(Vulnerability)
-        if severity: stmt=stmt.where(Vulnerability.severity==severity)
+        if severity:
+            levels=[v for v in severity.split(",") if v in ("严重","高危","中危","低危","未知")]
+            if levels:stmt=stmt.where(Vulnerability.severity.in_(levels))
         if source: stmt=stmt.where(Vulnerability.source==source)
         if q:
             like=f"%{q}%"
