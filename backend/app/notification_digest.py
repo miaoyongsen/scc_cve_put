@@ -46,6 +46,8 @@ def flush_digest():
             cve=str(item.get("cve") or "")
             severity=str(item.get("severity") or "")
             line=f"\n> **{i}. {title[:100]}**\n> {severity} {cve} · {source[:50]}\n"
+            ai=message.partition("AI 研判（仅供参考）")[2].strip() if "AI 研判（仅供参考）" in message else ""
+            if ai:line+="> AI 研判："+(" ".join(ai.split())[:130])+"\n"
             if link:line+="> [查看原文]("+str(link)+")\n"
             if len(chunk)+len(line)>MAX_MARKDOWN and chunk!=header:
                 chunks.append(chunk);chunk=header
