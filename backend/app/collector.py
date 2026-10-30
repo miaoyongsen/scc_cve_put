@@ -82,6 +82,10 @@ def nvd_severity(cve):
         api_key=os.getenv("NVD_API_KEY","").strip()
         interval=0.8 if api_key else 7.5
         delay=max(0,_nvd_next-time.monotonic())
+        from .notification_digest import _active_digest
+        batch=_active_digest.get()
+        deadline=batch.get("nvd_deadline") if batch else None
+        if deadline and time.monotonic()+delay+8>deadline:return "未知"
         if delay:time.sleep(delay)
         _nvd_next=time.monotonic()+interval
         headers={"User-Agent":"SCC-CVE/1.0 (NVD vulnerability enrichment)","Accept":"application/json"}
