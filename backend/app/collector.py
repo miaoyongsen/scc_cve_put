@@ -265,7 +265,10 @@ def collect_configured_sources(progress=None, mode="all"):
         raise RuntimeError("已有统一采集任务正在运行")
     run_id=None
     token=None
+    digest_token=None
+    from .notification_digest import begin_digest,end_digest,flush_digest
     try:
+        digest_token=begin_digest()
         run_id=begin_run({"all":"统一采集（RSS + Python）","vulnerability":"漏洞情报定时采集","article":"安全文章定时采集"}.get(mode,"统一采集"))
         token=_active_run.set(run_id)
         summary={"sources":0,"items":0,"eligible":0,"notifications":0,
@@ -310,6 +313,18 @@ def collect_configured_sources(progress=None, mode="all"):
                 log.exception("Python crawler %s failed",name)
             finally:
                 if progress:progress(summary)
+        delivery=flush_digest()
+        summary["notifications"]+=delivery["notifications"]
+        summary["errors"].extend(delivery["errors"])
+        if delivery["pushed"]:
+            for pushed in delivery["pushed"]:
+                for d in summary["details"]:
+                    if d.get("name")==pushed.get("from"):
+                        d.setdefault("pushed",[]).append({"title":pushed["title"],"cve":pushed["cve"]})
+                        d["notifications"]=d.get("notifications",0)+1
+                        break
+        if delivery["errors"]:
+            summary["details"].append({"name":"企业微信合并推送","adapter":"notification","status":"error","error":"；".join(delivery["errors"]),"items":0})
         failed=sum(d.get("status")=="error" for d in summary["details"])
         state="失败" if summary["details"] and failed==len(summary["details"]) else ("部分失败" if summary["errors"] else "完成")
         finish_run(run_id,state,summary)
@@ -318,5 +333,6 @@ def collect_configured_sources(progress=None, mode="all"):
         if run_id is not None:finish_run(run_id,"失败",{"error":str(exc)})
         raise
     finally:
+        if digest_token is not None:end_digest(digest_token)
         if token is not None:_active_run.reset(token)
         _collection_mutex.release()
