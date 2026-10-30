@@ -1,6 +1,6 @@
 <template><div class="shell"><main><div class="head"><div><h2>漏洞监控</h2><n-text depth="3">WatchVuln 多源高价值漏洞情报</n-text></div><n-space><n-button type="error" :disabled="!checkedIds.length" :loading="deleting" @click="bulkDelete">批量删除（{{checkedIds.length}}）</n-button><n-button :loading="enriching" @click="enrichOld">补全历史等级</n-button><n-button @click="openReviews">人工审核（{{pending.length}}）</n-button><n-button type="primary" :loading="refreshing" @click="refreshNow">立即采集</n-button></n-space></div><n-space style="margin:20px 0"><n-input v-model:value="q" clearable placeholder="搜索标题 / CVE" @keyup.enter="load"/><n-select v-model:value="severity" clearable placeholder="严重程度" style="width:130px" :options="options" @update:value="load"/><n-input v-model:value="source" clearable placeholder="来源" @keyup.enter="load"/><n-button @click="load">查询</n-button><n-text depth="3">共 {{total}} 条</n-text></n-space><n-data-table remote striped :row-key="row=>row.id" v-model:checked-row-keys="checkedIds" :columns="columns" :data="rows" :loading="loading" @update:expanded-row-keys="expandRows" :pagination="pagination" @update:page="changePage" @update:page-size="changePageSize" @update:sorter="changeSorter"/><n-modal v-model:show="show" preset="card" :title="selected?.title||'漏洞详情'" style="width:min(850px,95vw)"><n-descriptions v-if="selected" bordered :column="2"><n-descriptions-item label="CVE">{{selected.cve||'--'}}</n-descriptions-item><n-descriptions-item label="严重程度">{{selected.severity}}</n-descriptions-item><n-descriptions-item label="来源">{{selected.from}}</n-descriptions-item><n-descriptions-item label="内容类型">{{contentLabel(selected)}}</n-descriptions-item><n-descriptions-item label="披露时间">{{formatDate(selected.disclosure)}}</n-descriptions-item><n-descriptions-item label="采集时间">{{formatDate(selected.first_seen)}}</n-descriptions-item><n-descriptions-item label="描述" :span="2"><div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;max-height:340px;overflow:auto">{{selected.description||'暂无描述'}}</div></n-descriptions-item><n-descriptions-item label="原始数据" :span="2"><a v-if="rawLink(selected)" :href="rawLink(selected)" target="_blank" rel="noopener noreferrer">查看原始数据 ↗</a><span v-else>无原始链接</span></n-descriptions-item><n-descriptions-item label="修复建议" :span="2">{{selected.solutions}}</n-descriptions-item><n-descriptions-item v-if="selected.cve" label="完整 AI 研判" :span="2"><div style="white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7;max-height:480px;overflow:auto">{{aiLoading?"正在加载……":aiDetail?.result||"暂无 AI 研判结果"}}</div></n-descriptions-item></n-descriptions></n-modal><n-modal v-model:show="showReviews" preset="card" title="待人工确认的漏洞" style="width:min(1000px,95vw)"><n-data-table :columns="reviewColumns" :data="pending"/></n-modal><n-modal v-model:show="showProgress" :mask-closable="false" preset="card" title="本次采集进度" style="width:min(760px,95vw)"><div style="max-height:380px;overflow:auto"><div v-for="(item,i) in progressSummary.details" :key="i" style="padding:10px;border-bottom:1px solid #ddd"><strong>{{i+1}}. {{item.name}} — {{item.status==='running'?'采集中':item.status==='error'?'失败':'完成'}}</strong><div>检测 {{item.items}}　→ 一级 {{item.primary}}　→ 二级 {{item.secondary}}　→ 新增 {{item.new}}</div><div style="font-size:12px;color:#888;margin-top:5px">过滤：等级 {{item.filtered_severity||0}} / 时间 {{item.filtered_date||0}} / 日期缺失 {{item.missing_date||0}} / 关键词 {{item.filtered_keyword||0}} / 其他规则 {{item.filtered_rule||0}}</div></div></div><div style="margin-top:14px"><strong>{{progressStatus==='running'?'正在采集……':'采集结束'}}</strong><p>本次检测 {{progressSummary.items||0}} 条；一级 {{progressSummary.primary||0}} 条；二级 {{progressSummary.secondary||0}} 条；新增 {{progressSummary.new||0}} 条</p><p v-if="progressSummary.errors?.length" style="color:red">{{progressSummary.errors.join('；')}}</p></div><template #footer><n-button @click="closeProgress">关闭</n-button></template></n-modal></main></div></template>
 <script setup>
-import{h,ref,reactive,onMounted}from'vue'
+import{h,ref,reactive,computed,onMounted}from'vue'
 import{useRouter}from'vue-router'
 import{useMessage,NButton,NDataTable,NInput,NSelect,NSpace,NText,NTag,NModal,NDescriptions,NDescriptionsItem}from'naive-ui'
 import{list,detail,refresh}from'../api'
@@ -28,7 +28,7 @@ const pagination=reactive({page:1,pageSize:100,itemCount:0,showSizePicker:true,p
 function changePageSize(size){pageSize.value=size;pagination.pageSize=size;page.value=1;pagination.page=1;checkedIds.value=[];load()}
 function changeSorter(sorter){
   // Naive UI cycles ascend -> descend -> false. Never leave the table in an unsorted state.
-  const key=sorter?.columnKey || 'disclosure'
+  const key=(sorter?.columnKey === 'from' ? 'source' : sorter?.columnKey) || 'disclosure'
   const order=sorter?.order
   sortBy.value=key
   sortOrder.value=order==='ascend'?'asc':'desc'
@@ -41,7 +41,7 @@ function columnSortOrder(key){
   return sortBy.value===key?(sortOrder.value==='asc'?'ascend':'descend'):false
 }
 function formatDate(value){if(!value)return '--';let normalized=String(value).trim();if(/^\d{4}-\d\d-\d\d[T ]\d\d:\d\d/.test(normalized)&&!/(Z|[+-]\d\d:?\d\d)$/.test(normalized))normalized=normalized.replace(' ','T')+'Z';let d=new Date(normalized);if(Number.isNaN(d.getTime()))return value;return new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
-const columns = [
+const columns = computed(() => [
   {
     type: 'expand',
     expandable: row => (row.group_count || 1) > 1,
@@ -67,11 +67,11 @@ const columns = [
   { title: '漏洞标题', key: 'title', sorter: true, sortOrder: columnSortOrder('title'), minWidth: 300, render: row => h(NButton, { text: true, type: 'primary', onClick: () => open(row.id) }, () => h('span', { style: { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left', lineHeight: '1.5', display: 'inline-block' } }, row.title)) },
   { title: '内容类型', key: 'content_type', width: 110, render: row => h(NTag, { type: row.content_type==='article'?'info':'success' }, () => contentLabel(row)) },
   { title: 'CVE', key: 'cve', sorter: true, sortOrder: columnSortOrder('cve'), width: 160 },
-  { title: '来源', key: 'from', sorter: true, sortOrder: columnSortOrder('from'), width: 150, ellipsis: { tooltip: true } },
+  { title: '来源', key: 'from', sorter: true, sortOrder: columnSortOrder('source'), width: 150, ellipsis: { tooltip: true } },
   { title: '披露时间', key: 'disclosure', sorter: true, sortOrder: columnSortOrder('disclosure'), width: 185, render: row => formatDate(row.disclosure) },
   { title: '采集时间', key: 'first_seen', sorter: true, sortOrder: columnSortOrder('first_seen'), width: 185, render: row => formatDate(row.first_seen) },
   { title: '原始数据', key: 'raw', width: 100, render: row => rawButton(row) }
-]
+])
 async function load(){loading.value=true;try{const r=await list({page:page.value,size:pageSize.value,grouped:true,sort_by:sortBy.value,sort_order:sortOrder.value,q:q.value,severity:severity.value||'',source:source.value});rows.value=r.data.list;related.value={};total.value=r.data.total;pagination.itemCount=total.value}catch(e){msg.error(e.message)}finally{loading.value=false}}
 async function open(id){
   try{
