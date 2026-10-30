@@ -6,6 +6,10 @@
   <div class="cards">
     <n-card v-for="card in cards" :key="card.name" :title="card.name"><div class="number">{{card.value}}</div><n-text depth="3">{{card.note}}</n-text></n-card>
   </div>
+  <n-card title="定时采集调度器" style="margin-top:18px">
+    <n-alert :type="scheduler.enabled&&scheduler.thread_alive?'success':'warning'">自动采集：{{scheduler.enabled?'已启用':'未启用'}} · 调度线程：{{scheduler.thread_alive?'运行中':'未运行'}} · 页面时间统一为北京时间</n-alert>
+    <n-data-table :columns="schedulerColumns" :data="schedulerRows" style="margin-top:12px"/>
+  </n-card>
   <n-card title="每日采集趋势" style="margin-top:18px"><div v-if="!data.trend?.length">暂无采集数据</div><div v-for="d in data.trend||[]" :key="d.date" class="trend"><span>{{d.date}}</span><div class="track"><div class="fill" :style="{width:(100*d.items/maxItems)+'%'}"></div></div><span>{{d.items}} 条 / {{d.runs}} 次 / {{d.failed}} 异常</span></div></n-card>
   <n-card title="来源运行健康度" style="margin-top:18px"><n-data-table :columns="sourceColumns" :data="data.sources||[]" :pagination="{pageSize:10}" /></n-card>
   <n-card title="最近运行任务" style="margin-top:18px"><n-data-table :columns="runColumns" :data="data.recent||[]" :pagination="{pageSize:10}" /></n-card>
@@ -18,7 +22,11 @@ import axios from 'axios'
 import {NCard,NSpace,NButton,NSelect,NAlert,NDataTable,NText,useMessage} from 'naive-ui'
 const msg=useMessage(),days=ref(7),loading=ref(false),error=ref('')
 const options=[{label:'最近 7 天',value:7},{label:'最近 30 天',value:30},{label:'最近 90 天',value:90}]
+const scheduler=ref({enabled:false,thread_alive:false,tasks:{},interval_minutes:{}})
+const schedulerColumns=[{title:'任务',key:'name'},{title:'状态',key:'status'},{title:'上次开始（北京时间）',key:'started'},{title:'上次结束（北京时间）',key:'finished'},{title:'下次预计（北京时间）',key:'next'},{title:'周期',key:'interval'},{title:'最近错误',key:'error'}]
+const schedulerRows=computed(()=>['vulnerability','article'].map(k=>{const t=scheduler.value.tasks?.[k]||{};return {name:k==='vulnerability'?'漏洞情报':'安全文章',status:t.running?'采集中':scheduler.value.thread_alive?'等待中':'未运行',started:bjTime(t.last_started),finished:bjTime(t.last_finished),next:bjTime(t.next_run),interval:(scheduler.value.interval_minutes?.[k]||'—')+' 分钟',error:t.last_error||'—'}}))
 const data=ref({totals:{},rates:{},trend:[],sources:[],recent:[]})
+const bjTime=value=>{if(!value)return '—';const raw=String(value);const normalized=/[zZ]$|[+-]\\d{2}:\\d{2}$/.test(raw)?raw:raw.replace(' ','T')+'Z';const d=new Date(normalized);return Number.isNaN(d.getTime())?raw:new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
 const pct=v=>v==null?'—':v.toFixed(2)+'%'
 const cards=computed(()=>[
  {name:'任务失败率',value:pct(data.value.rates.failure_rate),note:'失败 + 部分失败'},
@@ -32,8 +40,8 @@ const cards=computed(()=>[
 ])
 const maxItems=computed(()=>Math.max(1,...(data.value.trend||[]).map(x=>x.items)))
 const sourceColumns=[{title:'情报来源',key:'name'},{title:'运行次数',key:'runs'},{title:'异常次数',key:'failed'},{title:'抓取数量',key:'items'},{title:'重复数量',key:'duplicates'}]
-const runColumns=[{title:'任务 ID',key:'id'},{title:'时间',key:'date'},{title:'任务类型',key:'mode'},{title:'状态',key:'status'},{title:'错误摘要',key:'errors',render:row=>(row.errors||[]).join('；')||'—'}]
-async function load(){loading.value=true;error.value='';try{const res=await axios.get('/api/v1/dashboard',{params:{days:days.value},headers:{Authorization:'Bearer '+localStorage.getItem('token')}});data.value=res.data.data}catch(e){error.value=e.response?.data?.detail||e.message;msg.error('看板加载失败')}finally{loading.value=false}}
+const runColumns=[{title:'任务 ID',key:'id'},{title:'时间',key:'date',render:r=>bjTime(r.date)},{title:'任务类型',key:'mode'},{title:'状态',key:'status'},{title:'错误摘要',key:'errors',render:row=>(row.errors||[]).join('；')||'—'}]
+async function load(){loading.value=true;error.value='';try{const res=await axios.get('/api/v1/dashboard',{params:{days:days.value},headers:{Authorization:'Bearer '+localStorage.getItem('token')}});data.value=res.data.data;const st=await axios.get('/api/v1/scheduler/status',{headers:{Authorization:'Bearer '+localStorage.getItem('token')}});scheduler.value=st.data.data}catch(e){error.value=e.response?.data?.detail||e.message;msg.error('看板加载失败')}finally{loading.value=false}}
 onMounted(load)
 </script>
 <style scoped>
