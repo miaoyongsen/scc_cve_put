@@ -230,7 +230,9 @@ def _collect_configured_sources(progress=None):
                 if notify:
                     try:
                         result=send_vulnerability(item,ai_enabled=new_cve)
-                        if result and any(result.values()):
+                        if result and result.get("queued"):
+                            log_run(item,tier,"待合并推送")
+                        elif result and any(result.values()):
                             summary["notifications"]+=1
                             log_run(item,tier,"推送成功")
                             detail["pushed"].append({"title":item.get("title"),"cve":item.get("cve")})
