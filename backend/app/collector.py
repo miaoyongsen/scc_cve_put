@@ -173,7 +173,8 @@ def _collect_configured_sources(progress=None):
         summary["details"].append(detail)
         if progress:progress(summary)
         if adapter != "rss":
-            summary["errors"].append(f"{name}: unsupported adapter {adapter!r}")
+            detail["error"]=f"不支持的适配器: {adapter!r}"
+            summary["errors"].append(f"{name}: {detail['error']}")
             detail["status"]="error"
             if progress:progress(summary)
             continue
@@ -238,12 +239,15 @@ def _collect_configured_sources(progress=None):
                     except Exception as exc:
                         log_run(item,tier,"推送失败",str(exc))
                         log.exception("Notification failed for %s",item["key"])
-                        summary["errors"].append(f"{name}: notification failed")
-            detail["status"]="done"
+                        detail["status"]="partial"
+                        detail.setdefault("notification_errors",[]).append(str(exc)[:500])
+                        summary["errors"].append(f"{name}: 推送失败: {str(exc)[:300]}")
+            if detail["status"]=="running":detail["status"]="done"
         except Exception as exc:
             detail["status"]="error"
             log.exception("Source %s failed",name)
-            summary["errors"].append(f"{name}: {type(exc).__name__}")
+            detail["error"]=f"{type(exc).__name__}: {str(exc)[:500]}"
+            summary["errors"].append(f"{name}: {detail['error']}")
         finally:
             if progress:progress(summary)
     return summary
