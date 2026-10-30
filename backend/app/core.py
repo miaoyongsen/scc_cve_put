@@ -368,6 +368,11 @@ app.include_router(ai_router)
 from .dashboard import router as dashboard_router
 app.include_router(dashboard_router)
 
+@app.get("/api/v1/scheduler/status",dependencies=[Depends(auth)])
+def get_scheduler_status():
+    from .scheduler import scheduler_status
+    return {"code":0,"data":scheduler_status()}
+
 from .scheduler import lifespan
 app.router.lifespan_context = lifespan
 
