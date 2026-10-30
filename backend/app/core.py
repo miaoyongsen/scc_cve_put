@@ -91,9 +91,11 @@ def begin_run(mode):
 def finish_run(run_id,status,summary):
     import json
     import logging
+    mode="采集任务"
     with Session(engine) as db:
         row=db.get(CollectionRun,run_id)
         if row:
+            mode=row.mode
             row.ended_at=datetime.now(timezone.utc)
             row.status=status
             row.summary=json.dumps(summary,ensure_ascii=False,default=str)
@@ -108,7 +110,7 @@ def finish_run(run_id,status,summary):
     if status in ("失败","部分失败"):
         try:
             from .error_alert import alert_run_errors
-            alert_run_errors(row.mode if row else "采集任务",status,summary)
+            alert_run_errors(mode,status,summary)
         except Exception:
             import logging
             logging.getLogger(__name__).exception("Error alert processing failed")
