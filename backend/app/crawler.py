@@ -179,6 +179,9 @@ def _collect_script(script_id:int):
     for item in result["items"]:
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
+        if content_type=="vulnerability" and item.get("severity")=="未知" and item.get("cve"):
+            from .collector import nvd_severity
+            item["severity"]=nvd_severity(item["cve"])
         tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
         if rejected:
             filtered+=1
