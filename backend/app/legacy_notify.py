@@ -122,6 +122,9 @@ def send_vulnerability(item, ai_enabled=None):
     message=format_wecom(item)
     if ai_text:
         message+="\n\n## AI 研判（仅供参考）\n"+ai_text[:3000]
+    from .notification_digest import queue_message
+    if queue_message(item,message):
+        return {"queued":True}
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
