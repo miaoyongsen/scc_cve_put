@@ -225,7 +225,9 @@ def _collect_script(script_id:int):
         if notify:
             try:
                 outcome=send_vulnerability(normalized,ai_enabled=new_cve)
-                if outcome and any(outcome.values()):
+                if outcome and outcome.get("queued"):
+                    log_run(normalized,tier,"待合并推送")
+                elif outcome and any(outcome.values()):
                     notified+=1
                     log_run(normalized,tier,"推送成功")
                     pushed.append({"title":item["title"],"cve":item["cve"]})
