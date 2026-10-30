@@ -267,22 +267,34 @@ def collect_script(script_id:int):
 
 @router.post("/collect-all")
 def collect_all_scripts():
-    """Run every configured Python crawler; a failure does not stop other scripts."""
+    """Run all Python crawlers and send one digest per content type."""
     from .core import _active_run,begin_run,finish_run
+    from .notification_digest import begin_digest,end_digest,flush_digest
     run_id=begin_run("全部 Python 爬虫")
     token=_active_run.set(run_id)
-    with Session(engine) as db:
-        ids=[x.id for x in db.scalars(select(CrawlerScript).order_by(CrawlerScript.id)).all()]
-    details=[]
-    for script_id in ids:
-        try:
-            result=collect_script(script_id)["data"]
-            details.append({"id":script_id,"ok":True,**result})
-        except Exception as exc:
-            details.append({"id":script_id,"ok":False,"error":str(exc)[:500]})
-    finish_run(run_id,"完成" if all(x["ok"] for x in details) else "部分失败",{"details":details})
-    _active_run.reset(token)
-    return {"code":0,"data":{"total":len(details),"success":sum(x["ok"] for x in details),"details":details}}
+    digest_token=begin_digest()
+    try:
+        with Session(engine) as db:
+            ids=[x.id for x in db.scalars(select(CrawlerScript.id).order_by(CrawlerScript.id)).all()]
+        details=[]
+        for script_id in ids:
+            try:
+                result=_collect_script(script_id)["data"]
+                details.append({"id":script_id,"name":str(script_id),"adapter":"python","status":"partial" if result["notification_errors"] else "done",**result})
+            except Exception as exc:
+                details.append({"id":script_id,"name":str(script_id),"adapter":"python","status":"error","error":str(exc)[:500]})
+        delivery=flush_digest()
+        errors=list(delivery["errors"])
+        if errors:details.append({"name":"合并推送","adapter":"notification","status":"error","error":"；".join(errors)})
+        state="部分失败" if errors or any(x["status"] in ("partial","error") for x in details) else "完成"
+        finish_run(run_id,state,{"details":details,"errors":errors,"notifications":delivery["notifications"]})
+        return {"code":0,"data":{"total":len(ids),"success":sum(x["status"]=="done" for x in details),"details":details,"notifications":delivery["notifications"]}}
+    except Exception as exc:
+        finish_run(run_id,"失败",{"error":str(exc),"errors":[str(exc)]})
+        raise
+    finally:
+        end_digest(digest_token)
+        _active_run.reset(token)
 
 @router.get("/findings")
 def list_findings():
