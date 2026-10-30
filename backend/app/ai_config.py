@@ -164,6 +164,13 @@ def analyze_intelligence(item):
     if not result:raise RuntimeError("DeepSeek 返回空结果")
     return result
 
+@router.get("/results/by-cve/{cve}")
+def get_analysis_by_cve(cve:str):
+    with Session(engine) as db:
+        row=db.query(AIAnalysis).filter(AIAnalysis.vuln_key==cve.upper()).first()
+        if row is None:return {"code":0,"data":None}
+        return {"code":0,"data":{"result":row.result,"status":row.status,"error":row.error,"model":row.model,"created_at":row.created_at}}
+
 @router.get("/results")
 def analysis_results(limit:int=50):
     with Session(engine) as db:
