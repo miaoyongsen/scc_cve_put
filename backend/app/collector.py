@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .credentials import SourceCredential
 from .core import engine
@@ -79,6 +79,12 @@ def nvd_severity(cve):
     with _nvd_lock:
         cached=_nvd_cache.get(cve)
         if cached and cached[1]>now:return cached[0]
+        with engine.begin() as conn:
+            conn.execute(text("CREATE TABLE IF NOT EXISTS nvd_cache (cve TEXT PRIMARY KEY, severity TEXT NOT NULL)"))
+            saved=conn.execute(text("SELECT severity FROM nvd_cache WHERE cve=:cve"),{"cve":cve}).scalar()
+        if saved:
+            _nvd_cache[cve]=(saved,float("inf"))
+            return saved
         api_key=os.getenv("NVD_API_KEY","").strip()
         interval=0.8 if api_key else 7.5
         delay=max(0,_nvd_next-time.monotonic())
@@ -106,9 +112,13 @@ def nvd_severity(cve):
                     score=metric.get("cvssData",{}).get("baseScore")
                     if score is not None:
                         level=severity_from_score(score)
-                        _nvd_cache[cve]=(level,time.monotonic()+86400)
+                        with engine.begin() as conn:
+                            conn.execute(text("INSERT OR REPLACE INTO nvd_cache(cve,severity) VALUES (:cve,:severity)"),{"cve":cve,"severity":level})
+                        _nvd_cache[cve]=(level,float("inf"))
                         return level
-            _nvd_cache[cve]=("未知",time.monotonic()+86400)
+            with engine.begin() as conn:
+                conn.execute(text("INSERT OR IGNORE INTO nvd_cache(cve,severity) VALUES (:cve,:severity)"),{"cve":cve,"severity":"未知"})
+            _nvd_cache[cve]=("未知",float("inf"))
         except (httpx.HTTPError,ValueError,KeyError,IndexError) as exc:
             log.warning("NVD lookup failed for %s: %s",cve,exc)
         return "未知"
