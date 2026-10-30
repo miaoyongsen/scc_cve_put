@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 log=logging.getLogger(__name__)
 _stop=threading.Event()
@@ -13,6 +13,25 @@ _thread=None
 _archive_thread=None
 last_run=None
 last_result=None
+_state_lock=threading.Lock()
+_state={kind:{"running":False,"last_started":None,"last_finished":None,"next_run":None,"last_error":None} for kind in ("vulnerability","article")}
+
+def _iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def _set_state(kind,**values):
+    with _state_lock:_state[kind].update(values)
+
+def scheduler_status():
+    from .collection_config import interval_minutes,article_interval_minutes
+    with _state_lock:
+        state={k:dict(v) for k,v in _state.items()}
+    return {"enabled":os.getenv("AUTO_COLLECT","false").lower()=="true",
+            "thread_alive":bool(_thread and _thread.is_alive()),
+            "server_time":_iso(),
+            "interval_minutes":{"vulnerability":interval_minutes(),"article":article_interval_minutes()},
+            "tasks":state}
+
 
 def wakeup():
     """Apply new interval without restarting the server."""
@@ -24,21 +43,26 @@ def loop():
     from .collector import collect_configured_sources
     intervals={"vulnerability":interval_minutes,"article":article_interval_minutes}
     next_runs={kind:time.monotonic()+getter()*60 for kind,getter in intervals.items()}
+    for kind,getter in intervals.items():
+        _set_state(kind,next_run=(datetime.now(timezone.utc)+timedelta(minutes=getter())).isoformat())
     while not _stop.is_set():
         now=time.monotonic()
         remaining=max(0,min(next_runs.values())-now)
         if _changed.wait(timeout=min(remaining,1)):
             _changed.clear()
             next_runs={kind:time.monotonic()+getter()*60 for kind,getter in intervals.items()}
+            for kind,getter in intervals.items():_set_state(kind,next_run=(datetime.now(timezone.utc)+timedelta(minutes=getter())).isoformat())
             continue
         if _stop.is_set():break
         for kind,getter in intervals.items():
             if time.monotonic()<next_runs[kind]:continue
+            _set_state(kind,running=True,last_started=_iso(),last_error=None)
             try:
                 last_result=collect_configured_sources(mode=kind)
                 last_run=datetime.now(timezone.utc).isoformat()
                 log.info("%s collection completed: %s",kind,last_result)
             except Exception as exc:
+                _set_state(kind,last_error=str(exc)[:500])
                 log.exception("%s collection failed",kind)
                 try:
                     from .error_alert import send_error_alert
@@ -47,6 +71,7 @@ def loop():
                     log.exception("Failed to notify scheduled collection error")
             finally:
                 next_runs[kind]=time.monotonic()+getter()*60
+                _set_state(kind,running=False,last_finished=_iso(),next_run=(datetime.now(timezone.utc)+timedelta(minutes=getter())).isoformat())
 
 
 def archive_loop():
