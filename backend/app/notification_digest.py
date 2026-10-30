@@ -45,7 +45,11 @@ def flush_digest():
             source=str(item.get("from") or item.get("source") or "未知来源")
             cve=str(item.get("cve") or "")
             severity=str(item.get("severity") or "")
-            line=f"\n> **{i}. {title[:100]}**\n> {severity} {cve} · {source[:50]}\n"
+            badges={"严重":"🔴","高危":"🟠","中危":"🟡","低危":"🟢","未知":"⚪"}
+            severity_label=badges.get(severity,"⚪")+" "+severity
+            if severity in ("严重","高危"):
+                severity_label=badges[severity]+' <font color="warning">'+severity+"</font>"
+            line=f"\n> **{i}. {title[:100]}**\n> {severity_label} {cve} · {source[:50]}\n"
             ai=message.partition("AI 研判（仅供参考）")[2].strip() if "AI 研判（仅供参考）" in message else ""
             if ai:line+="> AI 研判："+(" ".join(ai.split())[:130])+"\n"
             if link:line+="> [查看原文]("+str(link)+")\n"
