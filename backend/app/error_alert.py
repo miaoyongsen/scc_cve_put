@@ -38,8 +38,10 @@ def alert_run_errors(mode, status, summary):
     if not errors and summary.get("error"):
         errors=[str(summary["error"])]
     if not errors:
-        return
+        errors=["采集任务状态异常，但未记录具体错误，请检查运行详情和服务器日志。"]
     try:
-        send_error_alert(mode+"（"+status+"）","\n".join("• "+str(x) for x in errors[:20]))
+        delivered=send_error_alert(mode+"（"+status+"）","\n".join("• "+str(x) for x in errors[:20]))
+        if not delivered:
+            log.warning("Operational alert skipped: error bot disabled or webhook missing; mode=%s status=%s",mode,status)
     except Exception:
         log.exception("Failed to send operational error alert")
