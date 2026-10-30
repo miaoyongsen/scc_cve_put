@@ -181,7 +181,10 @@ def _collect_script(script_id:int):
         item={**item,"source":source}
         if content_type=="vulnerability" and item.get("severity")=="未知" and item.get("cve"):
             from .collector import nvd_severity
-            item["severity"]=nvd_severity(item["cve"])
+            from .core import Vulnerability
+            with Session(engine) as check_db:
+                known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
+            if not known:item["severity"]=nvd_severity(item["cve"])
         tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
         if rejected:
             filtered+=1
