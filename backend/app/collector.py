@@ -65,33 +65,49 @@ def extract_severity(title, description, entry):
             if pattern.search(part):return level
     return "未知"
 
-# NVD lookup is best-effort and cached, not required for feed collection.
+# Shared NVD limiter and short-lived cache; preserve official API quotas.
+import threading
+import time
+_nvd_lock=threading.Lock()
 _nvd_cache={}
-_nvd_requests=0
+_nvd_next=0.0
 def nvd_severity(cve):
-    global _nvd_requests
-    if not cve:return "未知"
-    if cve in _nvd_cache:return _nvd_cache[cve]
-    # Keep each collection run bounded; the public NVD API is rate-limited.
-    if _nvd_requests>=8:return "未知"
-    _nvd_requests+=1
-    try:
-        response=httpx.get("https://services.nvd.nist.gov/rest/json/cves/2.0",
-                           params={"cveId":cve},timeout=4,follow_redirects=False,trust_env=False)
-        response.raise_for_status()
-        data=response.json().get("vulnerabilities",[])
-        metrics=data[0]["cve"].get("metrics",{}) if data else {}
-        for field in ("cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"):
-            for metric in metrics.get(field,[]):
-                score=metric.get("cvssData",{}).get("baseScore")
-                if score is not None:
-                    result=severity_from_score(score)
-                    _nvd_cache[cve]=result
-                    return result
-    except (httpx.HTTPError,ValueError,KeyError,IndexError) as exc:
-        log.debug("NVD lookup unavailable for %s: %s",cve,exc)
-    _nvd_cache[cve]="未知"
-    return "未知"
+    global _nvd_next
+    cve=(cve or "").strip().upper()
+    if not CVE_PATTERN.fullmatch(cve):return "未知"
+    now=time.monotonic()
+    with _nvd_lock:
+        cached=_nvd_cache.get(cve)
+        if cached and cached[1]>now:return cached[0]
+        api_key=os.getenv("NVD_API_KEY","").strip()
+        interval=0.8 if api_key else 7.5
+        delay=max(0,_nvd_next-time.monotonic())
+        if delay:time.sleep(delay)
+        _nvd_next=time.monotonic()+interval
+        headers={"User-Agent":"SCC-CVE/1.0 (NVD vulnerability enrichment)","Accept":"application/json"}
+        if api_key:headers["apiKey"]=api_key
+        try:
+            response=httpx.get("https://services.nvd.nist.gov/rest/json/cves/2.0",
+                               params={"cveId":cve},headers=headers,timeout=8,
+                               follow_redirects=False,trust_env=False)
+            if response.status_code in (429,403,503):
+                _nvd_next=time.monotonic()+30
+                log.warning("NVD rate limit or unavailable: HTTP %s",response.status_code)
+                return "未知"
+            response.raise_for_status()
+            data=response.json().get("vulnerabilities",[])
+            metrics=data[0]["cve"].get("metrics",{}) if data else {}
+            for field in ("cvssMetricV40","cvssMetricV31","cvssMetricV30","cvssMetricV2"):
+                for metric in metrics.get(field,[]):
+                    score=metric.get("cvssData",{}).get("baseScore")
+                    if score is not None:
+                        level=severity_from_score(score)
+                        _nvd_cache[cve]=(level,time.monotonic()+86400)
+                        return level
+            _nvd_cache[cve]=("未知",time.monotonic()+86400)
+        except (httpx.HTTPError,ValueError,KeyError,IndexError) as exc:
+            log.warning("NVD lookup failed for %s: %s",cve,exc)
+        return "未知"
 
 def validate_url(url):
     p=urlparse(url)
@@ -162,8 +178,6 @@ def _collect_configured_sources(progress=None):
     from .review import Review
     from .core import Vulnerability
     from sqlalchemy import select
-    global _nvd_requests
-    _nvd_requests=0
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes,s.ai_enabled) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
