@@ -1,6 +1,7 @@
 """Per-collection notification digest. Does not affect manual approval pushes."""
 from contextvars import ContextVar
 from datetime import datetime
+import time
 from .notifications import send_wecom_markdown
 from .push_config import current
 from .core import log_run
@@ -9,7 +10,7 @@ _active_digest=ContextVar("active_notification_digest",default=None)
 MAX_MARKDOWN=3800
 
 def begin_digest():
-    return _active_digest.set({"vulnerability":[],"article":[]})
+    return _active_digest.set({"vulnerability":[],"article":[],"nvd_deadline":time.monotonic()+180})
 
 def end_digest(token):
     _active_digest.reset(token)
