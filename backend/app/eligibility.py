@@ -1,7 +1,14 @@
 """Shared eligibility rules for RSS and Python crawler findings."""
+import re
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
+
+def keyword_matches(title, word):
+    if word.startswith('*') and word.endswith('*') and len(word)>2:
+        token=word[1:-1]
+        return any(part.casefold()==token for part in re.findall(r'[A-Za-z0-9_]+', title))
+    return word in title
 
 def evaluate(item, config=None):
     """Return (tier, matched_keyword, rejection_reason). Tier is primary/secondary/none."""
@@ -28,8 +35,8 @@ def evaluate(item, config=None):
         if published.astimezone(timezone.utc)<datetime.now(timezone.utc)-timedelta(hours=config["hours"]):
             return None,None,"date"
     title=(item.get("title") or "").casefold()
-    direct=next((word for word in config["primary"] if word in title),None)
-    manual=next((word for word in config["secondary"] if word in title),None)
+    direct=next((word for word in config["primary"] if keyword_matches(title,word)),None)
+    manual=next((word for word in config["secondary"] if keyword_matches(title,word)),None)
     if item.get("severity", "未知") in ("中危", "低危", "未知"):
         return "secondary", manual or direct or "等级审核", None
     if direct:return "primary",direct,None
