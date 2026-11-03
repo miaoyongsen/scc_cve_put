@@ -5,9 +5,13 @@ from email.utils import parsedate_to_datetime
 from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
 
 def keyword_matches(title, word):
-    if word.startswith('*') and word.endswith('*') and len(word)>2:
-        token=word[1:-1]
-        return any(part.casefold()==token for part in re.findall(r'[A-Za-z0-9_]+', title))
+    """*phrase* matches complete words in order, allowing whitespace between them."""
+    if word.startswith("*") and word.endswith("*") and len(word)>2:
+        parts=word[1:-1].split()
+        if not parts:
+            return False
+        phrase=r"\\s+".join(re.escape(part) for part in parts)
+        return re.search(r"(?<![A-Za-z0-9_])"+phrase+r"(?![A-Za-z0-9_])",title,re.IGNORECASE) is not None
     return word in title
 
 def evaluate(item, config=None):
