@@ -16,6 +16,35 @@ class Review(Base):
     reviewed_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
 
 Base.metadata.create_all(engine)
+
+def has_unknown_pending_review(db, cve):
+    """Whether this CVE is awaiting review solely because its severity was unknown."""
+    if not cve:
+        return False
+    return db.scalar(
+        select(Review.id).join(Vulnerability, Review.vulnerability_id == Vulnerability.id)
+        .where(Vulnerability.cve == cve, Review.status == "pending",
+               Review.matched_keyword == "等级未知")
+    ) is not None
+
+def resolve_unknown_reviews(cve):
+    """Close unknown-severity reviews only after a confirmed high/critical delivery."""
+    if not cve:
+        return 0
+    with Session(engine) as db:
+        rows = db.scalars(
+            select(Review).join(Vulnerability, Review.vulnerability_id == Vulnerability.id)
+            .where(Vulnerability.cve == cve, Review.status == "pending",
+                   Review.matched_keyword == "等级未知")
+        ).all()
+        for row in rows:
+            row.status = "approved"
+            row.reviewed_at = datetime.now(timezone.utc)
+            vuln = db.get(Vulnerability, row.vulnerability_id)
+            if vuln:
+                vuln.pushed = True
+        db.commit()
+        return len(rows)
 router=APIRouter(prefix="/api/v1/reviews",dependencies=[Depends(auth)])
 
 @router.get("")
