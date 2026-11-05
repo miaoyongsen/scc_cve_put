@@ -19,6 +19,9 @@ def queue_message(item,message):
     digest=_active_digest.get()
     if digest is None:return False
     kind="article" if item.get("content_type") in ("article","article_review") else "vulnerability"
+    if kind=="vulnerability" and item.get("cve"):
+        if any(old.get("cve")==item["cve"] for old,_ in digest[kind]):
+            return True
     digest[kind].append((dict(item),message))
     return True
 
