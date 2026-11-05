@@ -44,8 +44,11 @@ def evaluate(item, config=None):
     title=(item.get("title") or "").casefold()
     direct=next((word for word in config["primary"] if keyword_matches(title,word)),None)
     manual=next((word for word in config["secondary"] if keyword_matches(title,word)),None)
-    if item.get("severity", "未知") in ("中危", "低危", "未知"):
-        return "secondary", manual or direct or "等级审核", None
+    severity=item.get("severity") or "未知"
+    if severity in ("中危", "低危"):
+        return None,None,"severity"
+    if severity == "未知":
+        return "secondary","等级未知",None
     if direct:return "primary",direct,None
     if manual:return "secondary",manual,None
     if config["primary"] or config["secondary"]:
