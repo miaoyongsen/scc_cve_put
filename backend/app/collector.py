@@ -189,7 +189,7 @@ def read_feed(url, api_key="", header_name="Authorization", on_status=None):
 
 def _collect_configured_sources(progress=None):
     from .eligibility import evaluate
-    from .review import Review
+    from .review import Review, has_unknown_pending_review, resolve_unknown_reviews
     from .core import Vulnerability
     from sqlalchemy import select
     summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
@@ -242,13 +242,16 @@ def _collect_configured_sources(progress=None):
                 with Session(engine) as db:
                     existing=db.scalar(select(Vulnerability.id).where(Vulnerability.key==item["key"]))
                     new_cve=bool(item.get("cve")) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
+                    pending_upgrade = (tier=="primary" and item.get("severity") in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
                     notify=upsert(db,item,True)
+                    if pending_upgrade:
+                        notify=True
                     if existing is None:
                         summary["new"]+=1
                         detail["new"]+=1
                     vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==item["key"]))
                     review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
-                    if review:
+                    if review and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
                         notify=False
                     elif manual and not direct:
                         db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=manual))
@@ -267,6 +270,8 @@ def _collect_configured_sources(progress=None):
                             summary["notifications"]+=1
                             log_run(item,tier,"推送成功")
                             detail["pushed"].append({"title":item.get("title"),"cve":item.get("cve")})
+                            if tier=="primary" and item.get("severity") in ("高危","严重"):
+                                resolve_unknown_reviews(item.get("cve"))
                         else:
                             log_run(item,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
                     except Exception as exc:
