@@ -12,6 +12,9 @@ def keyword_matches(title, word):
             return False
         phrase=r"\s+".join(re.escape(part) for part in parts)
         return re.search(r"(?<![A-Za-z0-9_])"+phrase+r"(?![A-Za-z0-9_])",title,re.IGNORECASE) is not None
+    if word.casefold() == "php":
+        # Do not treat .php file extensions as PHP technology mentions.
+        return re.search(r"(?<![A-Za-z0-9_.])php(?![A-Za-z0-9_])", title, re.IGNORECASE) is not None
     return word in title
 
 def evaluate(item, config=None):
