@@ -65,7 +65,11 @@ def flush_digest():
                     raise RuntimeError("机器人未确认发送成功")
             result["notifications"]+=len(entries)
             result["pushed"].extend({"title":item.get("title"),"cve":item.get("cve"),"from":item.get("from") or item.get("source")} for item,_ in entries)
-            for item,_ in entries:log_run(item,"article" if kind=="article" else "primary","推送成功","合并推送")
+            for item,_ in entries:
+                log_run(item,"article" if kind=="article" else "primary","推送成功","合并推送")
+                if kind=="vulnerability" and item.get("severity") in ("高危","严重"):
+                    from .review import resolve_unknown_reviews
+                    resolve_unknown_reviews(item.get("cve"))
         except Exception as exc:
             result["errors"].append(label+": "+str(exc)[:300])
             for item,_ in entries:log_run(item,"article" if kind=="article" else "primary","推送失败",str(exc)[:500])
