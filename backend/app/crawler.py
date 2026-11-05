@@ -162,7 +162,7 @@ def _collect_script(script_id:int):
     inserted=0
     from .core import Vulnerability
     from .eligibility import evaluate
-    from .review import Review
+    from .review import Review, has_unknown_pending_review, resolve_unknown_reviews
     from .worker import upsert
     from .legacy_notify import send_vulnerability
     from .core import log_run
@@ -210,13 +210,16 @@ def _collect_script(script_id:int):
                 old.payload=json.dumps(item,ensure_ascii=False)
             # Shared persistence and CVE grouping; separate collection execution.
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
+            pending_upgrade = (content_type=="vulnerability" and tier=="primary" and item["severity"] in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
             notify=upsert(db,normalized,content_type=="vulnerability")
+            if pending_upgrade:
+                notify=True
             # Repeated URLs are not sent again.
             if content_type in ("article","article_review"):
                 notify=old is None
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
-            if review and content_type=="vulnerability":
+            if review and content_type=="vulnerability" and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
                 notify=False
             elif tier=="secondary" and content_type=="vulnerability":
                 db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or ""))
@@ -237,6 +240,8 @@ def _collect_script(script_id:int):
                     notified+=1
                     log_run(normalized,tier,"推送成功")
                     pushed.append({"title":item["title"],"cve":item["cve"]})
+                    if tier=="primary" and item["severity"] in ("高危","严重"):
+                        resolve_unknown_reviews(item.get("cve"))
                 else:
                     log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
             except Exception as exc:
