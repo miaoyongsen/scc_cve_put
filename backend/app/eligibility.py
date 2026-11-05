@@ -48,7 +48,9 @@ def evaluate(item, config=None):
     if severity in ("中危", "低危"):
         return None,None,"severity"
     if severity == "未知":
-        return "secondary","等级未知",None
+        if direct:
+            return "secondary","等级未知",None
+        return None,None,"keyword"
     if direct:return "primary",direct,None
     if manual:return "secondary",manual,None
     if config["primary"] or config["secondary"]:
