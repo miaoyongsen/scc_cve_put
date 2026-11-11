@@ -39,6 +39,7 @@
       </n-form-item>
       <n-space>
         <n-button type="primary" :loading="saving" @click="save">保存监控设置</n-button>
+        <n-button :loading="testingDb" @click="testDb">测试数据库连接</n-button>
         <n-tag :type="status.worker_alive?'success':'warning'">后台任务：{{status.worker_alive?'已启动':'未启动'}}</n-tag>
         <n-tag v-if="status.running" type="info">正在查询/推送</n-tag>
       </n-space>
@@ -88,7 +89,7 @@ import axios from 'axios'
 import {NAlert,NButton,NCard,NDescriptions,NDescriptionsItem,NFormItem,NGrid,NGridItem,NInput,NSelect,NSpace,NStatistic,NSwitch,NTag,NText,useMessage} from 'naive-ui'
 const msg=useMessage(),api=axios.create({baseURL:'/api/v1/msoc'})
 api.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
-const saving=ref(false),testing=ref(false),testingError=ref(false),polling=ref(false)
+const saving=ref(false),testing=ref(false),testingError=ref(false),testingDb=ref(false),polling=ref(false)
 const form=ref({enabled:false,db_path:'/home/msocadmin/SCC_TT/data/webhook.db',poll_interval:3,wecom_enabled:false,wecom_webhook:'',error_enabled:false,error_webhook:''})
 const status=ref({})
 const intervalOptions=[1,3,5,10,15,30].map(x=>({label:x+' 分钟',value:x}))
@@ -106,6 +107,12 @@ async function save(){
   try{await api.put('/config',form.value);msg.success('MSOC 配置已保存');await load()}
   catch(e){msg.error(e.response?.data?.detail||e.message)}
   finally{saving.value=false}
+}
+async function testDb(){
+  testingDb.value=true
+  try{const d=(await api.post('/test-db')).data.data;msg.success('数据库连接成功：'+d.months.length+' 个月表，共 '+d.total+' 条记录')}
+  catch(e){msg.error(e.response?.data?.detail||e.message)}
+  finally{testingDb.value=false}
 }
 async function testNormal(){
   testing.value=true
