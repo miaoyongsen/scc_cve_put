@@ -291,47 +291,50 @@ def _capture_records(source_db, records):
 
     with Session(engine) as db:
         for month, month_records in by_month.items():
-            ids = [item["source_id"] for item in month_records]
-            existing_ids = set(db.scalars(
-                select(MSOCDelivery.source_id).where(
-                    MSOCDelivery.source_db == source_db,
-                    MSOCDelivery.source_month == month,
-                    MSOCDelivery.source_id.in_(ids),
-                )
-            ).all())
-            for item in month_records:
-                if item["source_id"] not in existing_ids:
-                    db.add(MSOCDelivery(
-                        source_db=source_db,
-                        source_month=month,
-                        source_id=item["source_id"],
-                        content=item["content"],
-                        received_at=item["received_at"],
-                        sent=False,
-                        attempt_count=0,
-                        last_error="",
-                        sent_at="",
-                        created_at=_now(),
-                    ))
-                    captured += 1
-            db.flush()
-            rows = db.scalars(
-                select(MSOCDelivery).where(
-                    MSOCDelivery.source_db == source_db,
-                    MSOCDelivery.source_month == month,
-                    MSOCDelivery.source_id.in_(ids),
-                    MSOCDelivery.sent.is_(False),
-                ).order_by(MSOCDelivery.received_at.asc(), MSOCDelivery.source_id.asc())
-            ).all()
-            for row in rows:
-                unsent.append({
-                    "id": row.id,
-                    "source_month": row.source_month,
-                    "source_id": row.source_id,
-                    "content": row.content,
-                    "received_at": row.received_at,
-                    "attempt_count": row.attempt_count,
-                })
+            # Stay below SQLite's bind-parameter limit even during high-volume bursts.
+            for offset in range(0, len(month_records), 400):
+                chunk = month_records[offset:offset + 400]
+                ids = [item["source_id"] for item in chunk]
+                existing_ids = set(db.scalars(
+                    select(MSOCDelivery.source_id).where(
+                        MSOCDelivery.source_db == source_db,
+                        MSOCDelivery.source_month == month,
+                        MSOCDelivery.source_id.in_(ids),
+                    )
+                ).all())
+                for item in chunk:
+                    if item["source_id"] not in existing_ids:
+                        db.add(MSOCDelivery(
+                            source_db=source_db,
+                            source_month=month,
+                            source_id=item["source_id"],
+                            content=item["content"],
+                            received_at=item["received_at"],
+                            sent=False,
+                            attempt_count=0,
+                            last_error="",
+                            sent_at="",
+                            created_at=_now(),
+                        ))
+                        captured += 1
+                db.flush()
+                rows = db.scalars(
+                    select(MSOCDelivery).where(
+                        MSOCDelivery.source_db == source_db,
+                        MSOCDelivery.source_month == month,
+                        MSOCDelivery.source_id.in_(ids),
+                        MSOCDelivery.sent.is_(False),
+                    ).order_by(MSOCDelivery.received_at.asc(), MSOCDelivery.source_id.asc())
+                ).all()
+                for row in rows:
+                    unsent.append({
+                        "id": row.id,
+                        "source_month": row.source_month,
+                        "source_id": row.source_id,
+                        "content": row.content,
+                        "received_at": row.received_at,
+                        "attempt_count": row.attempt_count,
+                    })
         db.commit()
     unsent.sort(key=lambda item: (item["received_at"], item["source_month"], item["source_id"]))
     return captured, unsent
