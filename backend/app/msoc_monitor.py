@@ -276,6 +276,7 @@ def poll_once():
 
 
 def _monitor_loop():
+    global _error_signature
     log.info("MSOC monitor worker started")
     while not _stop.is_set():
         try:
@@ -289,6 +290,7 @@ def _monitor_loop():
             try:
                 result = poll_once()
                 log.info("MSOC polling completed: %s", result)
+                _error_signature = ""
                 with _state_lock:
                     _state["last_error"] = None
                     _state["last_query_count"] = result.get("count", 0)
