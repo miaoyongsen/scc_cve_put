@@ -12,7 +12,7 @@
     </n-space>
 
     <n-alert type="info" style="margin:14px 0">
-      查询间隔同时代表查询时间范围：选择 3 分钟，就只查询最近 3 分钟的数据；选择 5 分钟，就只查询最近 5 分钟的数据。服务停机期间超出当前时间窗口的记录不补推，但已经进入 SCC_CVE 的记录会保留在日志列表中。
+      查询间隔同时代表查询时间范围：选择 3 分钟，就只查询最近 3 分钟的数据；选择 5 分钟，就只查询最近 5 分钟的数据。服务停机期间超出当前时间窗口的记录不补推；发送失败的记录也只保留未发送状态，不自动重试，所有已入库记录都会保留在日志列表中。
     </n-alert>
 
     <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" style="margin-bottom:16px">
@@ -50,7 +50,7 @@
 
     <n-card title="正常日志推送机器人" style="margin-top:16px">
       <n-alert type="info" style="margin-bottom:12px">
-        关闭正常推送时，监控仍会把查询到的日志保存到 SCC_CVE，状态显示为未发送。启用后只推送当前查询窗口内的未发送记录，不扫描历史积压。
+        关闭正常推送时，监控仍会把查询到的日志保存到 SCC_CVE，状态显示为未发送。只推送当前查询窗口内首次待发送的记录；发送失败后保留未发送状态，不自动补推。
       </n-alert>
       <n-form-item label="启用正常推送"><n-switch v-model:value="form.wecom_enabled"/></n-form-item>
       <n-form-item label="企业微信机器人 Webhook">
