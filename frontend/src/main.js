@@ -11,6 +11,8 @@ import AISettings from './views/AISettings.vue'
 import SkillSettings from './views/SkillSettings.vue'
 import RunRecords from './views/RunRecords.vue'
 import Dashboard from './views/Dashboard.vue'
+import MSOCLogs from './views/MSOCLogs.vue'
+import MSOCPushSettings from './views/MSOCPushSettings.vue'
 const router = createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:Login},
 {path:'/',redirect:'/dashboard'},
@@ -20,7 +22,9 @@ const router = createRouter({history:createWebHistory(),routes:[
 {path:'/run-records',component:RunRecords},
 {path:'/push-settings',component:PushSettings},
 {path:'/ai-settings',component:AISettings},
-{path:'/skill-settings',component:SkillSettings}
+{path:'/skill-settings',component:SkillSettings},
+{path:'/msoc-logs',component:MSOCLogs},
+{path:'/msoc-push-settings',component:MSOCPushSettings}
 ]})
 router.beforeEach(to=>{if(to.path!='/login'&&!localStorage.getItem('token'))return '/login'})
 createApp(App).use(createPinia()).use(router).mount('#app')
