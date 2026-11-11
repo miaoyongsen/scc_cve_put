@@ -324,6 +324,7 @@ def _capture_records(source_db, records):
                         MSOCDelivery.source_month == month,
                         MSOCDelivery.source_id.in_(ids),
                         MSOCDelivery.sent.is_(False),
+                        MSOCDelivery.attempt_count == 0,
                     ).order_by(MSOCDelivery.received_at.asc(), MSOCDelivery.source_id.asc())
                 ).all()
                 for row in rows:
