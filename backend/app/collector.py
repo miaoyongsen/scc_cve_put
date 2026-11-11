@@ -222,14 +222,6 @@ def _collect_configured_sources(progress=None):
                         known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
                     if not known:item["severity"]=nvd_severity(item["cve"])
                 tier,matched,rejected=evaluate(item)
-                upgrade_candidate = False
-                if item.get("cve") and item.get("severity") in ("高危", "严重"):
-                    with Session(engine) as check_db:
-                        upgrade_candidate = has_unknown_pending_review(check_db, item.get("cve"))
-                from .eligibility import allow_unknown_review_upgrade
-                tier,matched,rejected=allow_unknown_review_upgrade(
-                    item,tier,matched,rejected,upgrade_candidate
-                )
                 if rejected:
                     field={"severity":"filtered_severity","date":"filtered_date",
                            "missing_date":"missing_date","keyword":"filtered_keyword"}[rejected]
