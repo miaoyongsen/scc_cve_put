@@ -370,6 +370,9 @@ app.include_router(ai_router)
 from .dashboard import router as dashboard_router
 app.include_router(dashboard_router)
 
+from .msoc_monitor import router as msoc_router
+app.include_router(msoc_router)
+
 @app.get("/api/v1/scheduler/status",dependencies=[Depends(auth)])
 def get_scheduler_status():
     from .scheduler import scheduler_status
