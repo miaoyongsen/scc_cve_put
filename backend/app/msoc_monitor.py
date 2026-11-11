@@ -24,7 +24,10 @@ router = APIRouter(prefix="/api/v1/msoc", dependencies=[Depends(auth)])
 DEFAULT_DB_PATH = "/home/msocadmin/SCC_TT/data/webhook.db"
 ALLOWED_INTERVALS = (1, 3, 5, 10, 15, 30)
 MAX_BATCH_ROWS = 100
-MAX_MESSAGE_CHARS = 3500
+MAX_MESSAGE_BYTES = 3800
+_send_lock = threading.Lock()
+_last_send_started = 0.0
+_poll_lock = threading.Lock()
 
 
 class MSOCConfig(Base):
@@ -100,14 +103,20 @@ def _save_status(**values):
 
 
 def _send_markdown(webhook, content):
+    global _last_send_started
     if not webhook:
         raise RuntimeError("企业微信 Webhook 未配置")
     if not webhook.startswith("https://qyapi.weixin.qq.com/cgi-bin/webhook/send?"):
         raise ValueError("仅允许企业微信官方机器人 Webhook")
-    with httpx.Client(timeout=20) as client:
-        response = client.post(webhook, json={"msgtype": "markdown", "markdown": {"content": content}})
-        response.raise_for_status()
-        result = response.json()
+    with _send_lock:
+        remaining = 3.0 - (time.monotonic() - _last_send_started)
+        if _last_send_started and remaining > 0:
+            time.sleep(remaining)
+        _last_send_started = time.monotonic()
+        with httpx.Client(timeout=20) as client:
+            response = client.post(webhook, json={"msgtype": "markdown", "markdown": {"content": content}})
+            response.raise_for_status()
+            result = response.json()
     if result.get("errcode") != 0:
         raise RuntimeError("企业微信返回错误：" + str(result.get("errmsg", result.get("errcode"))))
     return True
@@ -188,8 +197,9 @@ def _format_row(row):
         raw = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
     except Exception:
         raw = str(raw)
-    if len(raw) > 2400:
-        raw = raw[:2400] + "\n……（内容过长，完整内容请在 MSOC 日志页面查看）"
+    raw_bytes = raw.encode("utf-8")
+    if len(raw_bytes) > 2200:
+        raw = raw_bytes[:2200].decode("utf-8", "ignore") + "\n……（内容过长，完整内容请在 MSOC 日志页面查看）"
     return ("### 日志 #" + str(row["id"]) + " · " + row["month"] + "\n"
             "> **接收时间**：" + (row["received_at"] or "未知") + "\n"
             "JSON 原文：\n" + raw)
@@ -199,18 +209,19 @@ def _send_rows(rows, webhook):
     groups, current, current_len = [], [], 0
     for row in rows:
         item = _format_row(row)
-        if current and (len(current) >= 4 or current_len + len(item) > MAX_MESSAGE_CHARS):
+        item_bytes = len(item.encode("utf-8"))
+        if current and (len(current) >= 4 or current_len + item_bytes > MAX_MESSAGE_BYTES - 200):
             groups.append(current)
             current, current_len = [], 0
         current.append((row, item))
-        current_len += len(item)
+        current_len += item_bytes
     if current:
         groups.append(current)
     sent = 0
     for group in groups:
         body = "## MSOC 新增日志（" + str(len(group)) + " 条）\n\n"
         body += "\n\n".join(item for _, item in group)
-        _send_markdown(webhook, body[:MAX_MESSAGE_CHARS])
+        _send_markdown(webhook, body)
         last = group[-1][0]
         with Session(engine) as db:
             config = db.get(MSOCConfig, 1)
@@ -224,7 +235,7 @@ def _send_rows(rows, webhook):
     return sent
 
 
-def poll_once():
+def _poll_once_impl():
     row = _config()
     if not row.enabled:
         return {"skipped": True, "reason": "MSOC 监控未启用", "count": 0}
@@ -247,13 +258,21 @@ def poll_once():
         _save_status(initialized=True, last_query=now, last_error="")
         return {"initialized": True, "count": 0}
     _save_status(last_query=now, last_error="")
-    if not pending:
-        return {"count": 0, "pushed": 0}
-    sent = _send_rows(pending, row.wecom_webhook)
+    found = sent = 0
+    while pending:
+        found += len(pending)
+        sent += _send_rows(pending, row.wecom_webhook)
+        cursor = _config()
+        _, pending = _read_pending(row.db_path, cursor.cursor_month, cursor.cursor_id)
     with _state_lock:
-        _state["last_query_count"] = len(pending)
-        _state["total_pushed"] = row.total_pushed + sent
-    return {"count": len(pending), "pushed": sent}
+        _state["last_query_count"] = found
+        _state["total_pushed"] = _config().total_pushed
+    return {"count": found, "pushed": sent}
+
+
+def poll_once():
+    with _poll_lock:
+        return _poll_once_impl()
 
 
 def _monitor_loop():
@@ -365,7 +384,7 @@ def get_status():
     row = _config()
     with _state_lock:
         state = dict(_state)
-    return {"code": 0, "data": {**_config_data(row), **state,
+    return {"code": 0, "data": {**state, **_config_data(row),
                                  "worker_alive": bool(_thread and _thread.is_alive())}}
 
 
