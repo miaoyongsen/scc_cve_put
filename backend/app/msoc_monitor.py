@@ -456,6 +456,7 @@ def _monitor_loop():
                 _wakeup.clear()
                 continue
 
+            cycle_started = time.monotonic()
             with _state_lock:
                 _state["running"] = True
             try:
@@ -475,7 +476,9 @@ def _monitor_loop():
                 with _state_lock:
                     _state["running"] = False
 
-            _wakeup.wait(max(1, config.poll_interval * 60))
+            # Keep start-to-start cadence equal to the configured interval.
+            wait_seconds = max(0, config.poll_interval * 60 - (time.monotonic() - cycle_started))
+            _wakeup.wait(wait_seconds)
             _wakeup.clear()
         except Exception:
             log.exception("MSOC monitor loop crashed")
