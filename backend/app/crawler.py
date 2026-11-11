@@ -186,14 +186,6 @@ def _collect_script(script_id:int):
                 known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
             if not known:item["severity"]=nvd_severity(item["cve"])
         tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
-        upgrade_candidate = False
-        if content_type=="vulnerability" and item.get("cve") and item.get("severity") in ("高危", "严重"):
-            with Session(engine) as check_db:
-                upgrade_candidate = has_unknown_pending_review(check_db, item.get("cve"))
-        from .eligibility import allow_unknown_review_upgrade
-        tier,keyword,rejected=allow_unknown_review_upgrade(
-            item,tier,keyword,rejected,upgrade_candidate
-        )
         if rejected:
             filtered+=1
             continue
