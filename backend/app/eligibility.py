@@ -17,20 +17,6 @@ def keyword_matches(title, word):
         return re.search(r"(?<![A-Za-z0-9_.])php(?![A-Za-z0-9_])", title, re.IGNORECASE) is not None
     return word in title
 
-def allow_unknown_review_upgrade(item, tier, matched, rejected, has_pending_unknown_review):
-    """Promote a known high/critical CVE when an earlier unknown-severity review is pending.
-
-    This exception is deliberately limited to keyword rejection / ordinary eligibility.
-    Date-window and configured severity rejections remain authoritative.
-    """
-    severity = item.get("severity") or "未知"
-    if (has_pending_unknown_review
-            and severity in ("高危", "严重")
-            and rejected in (None, "keyword")):
-        return "primary", "等级未知升级", None
-    return tier, matched, rejected
-
-
 def evaluate(item, config=None):
     """Return (tier, matched_keyword, rejection_reason). Tier is primary/secondary/none."""
     if config is None:
