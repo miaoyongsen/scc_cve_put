@@ -93,9 +93,11 @@ def archive_loop():
 @asynccontextmanager
 async def lifespan(app):
     global _thread,_archive_thread
+    from .msoc_monitor import start_monitor,stop_monitor
     _stop.clear()
     _archive_thread=threading.Thread(target=archive_loop,name="sqlite-log-archiver",daemon=True)
     _archive_thread.start()
+    start_monitor()
     if os.getenv("AUTO_COLLECT","false").lower()=="true":
         _stop.clear()
         _changed.clear()
@@ -104,6 +106,7 @@ async def lifespan(app):
     try:
         yield
     finally:
+        stop_monitor()
         _stop.set()
         _changed.set()
         if _thread:_thread.join(timeout=5)
