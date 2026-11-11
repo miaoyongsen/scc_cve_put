@@ -423,6 +423,24 @@ def manual_poll():
     return {"code": 0, "data": result}
 
 
+@router.post("/test-db")
+def test_database_connection():
+    row = _config()
+    try:
+        conn = _readonly_connection(row.db_path)
+        try:
+            months = _month_tables(conn)
+            total = 0
+            for month in months:
+                total += conn.execute('SELECT COUNT(*) FROM "webhook_' + month + '"').fetchone()[0]
+        finally:
+            conn.close()
+        return {"code": 0, "data": {"success": True, "db_path": row.db_path,
+                                    "months": months, "total": total}}
+    except Exception as exc:
+        raise HTTPException(503, str(exc)[:500])
+
+
 @router.get("/months")
 def list_months():
     row = _config()
