@@ -622,6 +622,9 @@ def test_database_connection():
             total = 0
             for month in months:
                 table = "webhook_" + month
+                columns = {item["name"] for item in conn.execute('PRAGMA table_info("' + table + '")')}
+                if not {"id", "content", "received_at"}.issubset(columns):
+                    raise RuntimeError(table + " 表结构不符合预期，需要 id、content、received_at 三列")
                 total += conn.execute('SELECT COUNT(*) FROM "' + table + '"').fetchone()[0]
         finally:
             conn.close()
