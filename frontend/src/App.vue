@@ -11,6 +11,8 @@
           <router-link to="/push-settings">推送配置</router-link>
           <router-link to="/ai-settings">AI 配置</router-link>
           <router-link to="/skill-settings">Skill 配置</router-link>
+          <router-link to="/msoc-logs">MSOC 日志</router-link>
+          <router-link to="/msoc-push-settings">MSOC 推送配置</router-link>
         </nav>
         <span class="build">AI 来源联动 · 2026-10-27</span>
       </div>
