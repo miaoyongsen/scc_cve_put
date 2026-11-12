@@ -179,6 +179,8 @@ def _collect_script(script_id:int):
     pending=[]
     events=[]
     collection_time=datetime.now().astimezone().isoformat(timespec="seconds")
+    from .collection_config import article_lookback_hours
+    article_window_hours=article_lookback_hours()
     for item_index,item in enumerate(result["items"]):
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
@@ -217,7 +219,7 @@ def _collect_script(script_id:int):
                         raise ValueError("发布时间未包含时区")
                     published_utc=published.astimezone(timezone.utc)
                     now_utc=datetime.now(timezone.utc)
-                    if published_utc < now_utc-timedelta(hours=24):
+                    if published_utc < now_utc-timedelta(hours=article_window_hours):
                         reject_reason="文章发布时间早于最近24小时窗口"
                         event["status"]="超出24小时，跳过"
                     elif published_utc > now_utc:
@@ -326,7 +328,7 @@ def _collect_script(script_id:int):
             "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
             "duplicates":duplicates,"pushed":pushed,"pending":pending,"events":events,
-            "article_time_window_hours":24 if content_type in ("article","article_review") else None,
+            "article_time_window_hours":article_window_hours if content_type in ("article","article_review") else None,
             "stderr":result["stderr"]}}
 
 def collect_script(script_id:int):
