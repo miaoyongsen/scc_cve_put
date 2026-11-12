@@ -179,10 +179,18 @@ def collection_run_detail(run_id:int):
         r=db.get(CollectionRun,run_id)
         if not r:raise HTTPException(404,"运行记录不存在")
         rows=db.scalars(select(RunRecord).where(RunRecord.run_id==run_id).order_by(RunRecord.id)).all()
+        summary=json.loads(r.summary or "{}")
+        items=[{"id":x.id,"source":x.source,"title":x.title,"cve":x.cve,
+            "tier":x.tier,"status":x.status,"detail":x.detail,"url":x.url} for x in rows]
+        # Security-article events are also stored in the run summary. Prefer this
+        # one-row-per-article audit trail over intermediate push-state log rows.
+        article_events=[]
+        for source in summary.get("details") or []:
+            article_events.extend(source.get("events") or [])
+        if article_events:
+            items=[x for x in items if x.get("tier")!="article"]+article_events
         return {"code":0,"data":{"id":r.id,"started_at":r.started_at,"ended_at":r.ended_at,
-            "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}"),
-            "items":[{"id":x.id,"source":x.source,"title":x.title,"cve":x.cve,
-                "tier":x.tier,"status":x.status,"detail":x.detail,"url":x.url} for x in rows]}}
+            "mode":r.mode,"status":r.status,"summary":summary,"items":items}}
 
 @app.get("/api/v1/run-records", dependencies=[Depends(auth)])
 def list_run_records(page:int=1,size:int=30,tier:str="",status:str="",q:str=""):
