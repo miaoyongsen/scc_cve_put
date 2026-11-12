@@ -115,15 +115,16 @@ def finish_run(run_id,status,summary):
             import logging
             logging.getLogger(__name__).exception("Error alert processing failed")
 
-def log_run(item,tier,status,detail=""):
+def log_run(item,tier,status,detail="",run_id=None):
     import logging
     try:
         refs=item.get("references") or []
         url=item.get("url") or (refs[0] if isinstance(refs,list) and refs else "")
+        active_run_id=run_id if run_id is not None else _active_run.get()
         with Session(engine) as db:
             db.add(RunRecord(source=str(item.get("from") or item.get("source") or "")[:120],
                 title=str(item.get("title") or "")[:500],cve=str(item.get("cve") or "")[:50],
-                tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000],run_id=_active_run.get()))
+                tier=tier,status=status,detail=str(detail)[:2000],url=str(url)[:2000],run_id=active_run_id))
             db.commit()
     except Exception:
         logging.getLogger(__name__).exception("Failed to save run history")
