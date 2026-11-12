@@ -6,7 +6,7 @@ import hashlib
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import Integer, String, Text, DateTime, select, Boolean
@@ -196,10 +196,45 @@ def _collect_script(script_id:int):
         key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
         normalized={"key":key,"title":item["title"],"description":item.get("description") or "",
                     "severity":item["severity"],"cve":item["cve"],
-                    "disclosure":collection_time if content_type in ("article","article_review") else (item.get("disclosure") or ""),
+                    "disclosure":item.get("disclosure") or "",
                     "solutions":item.get("solutions") or "",
                     "references":[item["url"]],"tags":item.get("tags") or [],
                     "from":source,"reason":[],"content_type":content_type}
+
+        # Security articles must have a real publication timestamp within the
+        # trailing 24 hours. Do not substitute collection time for publication time.
+        if content_type in ("article","article_review"):
+            published_raw=(item.get("disclosure") or "").strip()
+            event={"id":f"article-{script_id}-{item_index}","source":source,"title":item["title"],
+                   "cve":item.get("cve") or "","tier":"article","status":"","detail":"",
+                   "url":item["url"],"published_at":published_raw}
+            reject_reason=""
+            if not published_raw:
+                reject_reason="文章未提供发布时间，无法确认是否属于最近24小时"
+                event["status"]="时间缺失，跳过"
+            else:
+                try:
+                    published=datetime.fromisoformat(published_raw.replace("Z","+00:00"))
+                    if published.tzinfo is None:
+                        raise ValueError("发布时间未包含时区")
+                    published_utc=published.astimezone(timezone.utc)
+                    now_utc=datetime.now(timezone.utc)
+                    if published_utc < now_utc-timedelta(hours=24):
+                        reject_reason="文章发布时间早于最近24小时窗口"
+                        event["status"]="超出24小时，跳过"
+                    elif published_utc > now_utc:
+                        reject_reason="文章发布时间晚于当前时间"
+                        event["status"]="发布时间异常，跳过"
+                except (ValueError,TypeError,OverflowError) as exc:
+                    reject_reason="发布时间格式无效："+str(exc)[:180]
+                    event["status"]="发布时间无效，跳过"
+            if reject_reason:
+                event["detail"]=reject_reason
+                filtered+=1
+                log_run(normalized,"article",event["status"],reject_reason,run_id=run_id)
+                events.append(event)
+                continue
+
         with Session(engine) as db:
             url_fingerprint=hashlib.md5(item["url"].encode("utf-8")).hexdigest()
             old=next((record for record in db.scalars(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id)).all() if hashlib.md5(record.url.encode("utf-8")).hexdigest()==url_fingerprint),None)
@@ -238,8 +273,6 @@ def _collect_script(script_id:int):
         if tier=="secondary":pending.append({"title":item["title"],"cve":item["cve"]})
 
         if content_type in ("article","article_review"):
-            event={"id":f"article-{script_id}-{item_index}","source":source,"title":item["title"],
-                   "cve":item.get("cve") or "","tier":"article","status":"","detail":"","url":item["url"]}
             if article_duplicate:
                 event["status"]="重复跳过"
                 event["detail"]="重复文章：相同脚本下 URL 已采集，本次不重复推送"
@@ -295,6 +328,7 @@ def _collect_script(script_id:int):
             "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
             "duplicates":duplicates,"pushed":pushed,"pending":pending,"events":events,
+            "article_time_window_hours":24 if content_type in ("article","article_review") else None,
             "stderr":result["stderr"]}}
 
 def collect_script(script_id:int):
