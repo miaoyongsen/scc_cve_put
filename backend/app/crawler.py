@@ -72,10 +72,8 @@ def validate_item(item,index):
         raise ValueError(f"items[{index}].cvss_score 必须在0到10之间")
     for key in ("description","solutions","disclosure"):
         if key in item and not isinstance(item[key],str):raise ValueError(f"items[{index}].{key} 必须为字符串")
-    if item.get("disclosure"):
-        from datetime import datetime
-        d=datetime.fromisoformat(item["disclosure"].replace("Z","+00:00"))
-        if d.tzinfo is None:raise ValueError(f"items[{index}].disclosure 必须包含时区")
+    # Keep publication-date parsing in the collection flow so a bad/missing
+    # article date is recorded as an individual skip instead of aborting the script.
     if "tags" in item and (not isinstance(item["tags"],list) or not all(isinstance(t,str) for t in item["tags"])):
         raise ValueError(f"items[{index}].tags 必须为字符串数组")
     source=item.get("source")
