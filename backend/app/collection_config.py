@@ -6,6 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth
 
 ALLOWED_INTERVALS=(15,30,60,180,360,720,1440)
+ARTICLE_LOOKBACK_OPTIONS=(6,12,24,48,72,168,720)
 class CollectionConfig(Base):
     __tablename__="collection_config"
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
@@ -14,6 +15,7 @@ class CollectionConfig(Base):
     allowed_severities: Mapped[str]=mapped_column(String(200),default='严重,高危,中危,低危,未知',nullable=False)
     review_keywords: Mapped[str]=mapped_column(String(3000),default='',nullable=False)
     lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
+    article_lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
     whitelist: Mapped[str]=mapped_column(String(2000),default='',nullable=False)
 Base.metadata.create_all(engine)
 # Add column to existing SQLite installations without deleting settings.
@@ -29,6 +31,10 @@ if 'whitelist' not in {x['name'] for x in inspect(engine).get_columns('collectio
 if 'lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
         conn.execute(text('ALTER TABLE collection_config ADD COLUMN lookback_hours INTEGER NOT NULL DEFAULT 24'))
+
+if 'article_lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
+    with engine.begin() as conn:
+        conn.execute(text('ALTER TABLE collection_config ADD COLUMN article_lookback_hours INTEGER NOT NULL DEFAULT 24'))
 
 if 'review_keywords' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
@@ -53,6 +59,11 @@ def lookback_hours():
         row=db.get(CollectionConfig,1)
         return row.lookback_hours if row else 24
 
+def article_lookback_hours():
+    with Session(engine) as db:
+        row=db.get(CollectionConfig,1)
+        return row.article_lookback_hours if row and row.article_lookback_hours in ARTICLE_LOOKBACK_OPTIONS else 24
+
 def whitelist_keywords():
     with Session(engine) as db:
         row=db.get(CollectionConfig,1)
@@ -74,19 +85,22 @@ class CollectionInput(BaseModel):
     article_interval_minutes: int=Field(default=60)
     whitelist: str=Field(default='',max_length=2000)
     lookback_hours: int=Field(default=24)
+    article_lookback_hours: int=Field(default=24)
     review_keywords: str=Field(default='',max_length=3000)
     allowed_severities: list[str]=Field(default_factory=lambda:['严重','高危','中危','低危','未知'])
 
 @router.get("")
 def get_collection():
     with Session(engine) as db:
-        return {"code":0,"data":{"interval_minutes":interval_minutes(),"article_interval_minutes":article_interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
+        return {"code":0,"data":{"interval_minutes":interval_minutes(),"article_interval_minutes":article_interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"article_lookback_hours":article_lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
 
 @router.put("")
 def set_collection(body:CollectionInput):
     from fastapi import HTTPException
     if body.lookback_hours not in (0,24,72,168,720):
-        raise HTTPException(422,'Unsupported time range')
+        raise HTTPException(422,'Unsupported vulnerability time range')
+    if body.article_lookback_hours not in ARTICLE_LOOKBACK_OPTIONS:
+        raise HTTPException(422,'Unsupported security article time range')
     if body.interval_minutes not in ALLOWED_INTERVALS or body.article_interval_minutes not in ALLOWED_INTERVALS:
         raise HTTPException(422,"Unsupported interval")
     normalized=list(dict.fromkeys(x.strip() for x in body.allowed_severities))
@@ -101,9 +115,10 @@ def set_collection(body:CollectionInput):
         row.article_interval_minutes=body.article_interval_minutes
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
+        row.article_lookback_hours=body.article_lookback_hours
         row.review_keywords=body.review_keywords
         row.allowed_severities=','.join(normalized)
         db.commit()
     from .scheduler import wakeup
     wakeup()
-    return {"code":0,"data":{"interval_minutes":body.interval_minutes,"article_interval_minutes":body.article_interval_minutes},"message":"success"}
+    return {"code":0,"data":{"interval_minutes":body.interval_minutes,"article_interval_minutes":body.article_interval_minutes,"lookback_hours":body.lookback_hours,"article_lookback_hours":body.article_lookback_hours},"message":"success"}
