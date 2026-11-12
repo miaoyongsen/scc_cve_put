@@ -1,6 +1,7 @@
 """Per-collection notification digest. Does not affect manual approval pushes."""
 from contextvars import ContextVar
 from datetime import datetime
+import os
 import time
 from .notifications import send_wecom_markdown
 from .push_config import current
@@ -29,7 +30,8 @@ def flush_digest():
     digest=_active_digest.get()
     if digest is None:return {"notifications":0,"errors":[],"pushed":[]}
     config=current()
-    webhook=config["wecom_webhook"] if config["wecom_enabled"] else ""
+    # Match manual push behavior: DB-configured webhook first, then .env fallback.
+    webhook=(config["wecom_webhook"] if config["wecom_enabled"] else "") or os.getenv("WECHAT_WEBHOOK_URL", "").strip()
     result={"notifications":0,"errors":[],"pushed":[]}
     for kind,label in (("vulnerability","漏洞情报"),("article","安全文章")):
         entries=digest[kind]
