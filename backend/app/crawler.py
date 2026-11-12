@@ -150,6 +150,11 @@ def test_script(script_id:int):
 
 @router.post("/{script_id}/collect")
 def _collect_script(script_id:int):
+    from .core import _active_run
+    # Direct/manual collection must create a CollectionRun as well, so its
+    # per-item records are visible in the same run-detail screen as scheduled jobs.
+    if _active_run.get() is None:
+        return collect_script(script_id)
     with Session(engine) as db:
         x=db.get(CrawlerScript,script_id)
         if not x:raise HTTPException(404,"脚本不存在")
@@ -159,13 +164,12 @@ def _collect_script(script_id:int):
         ai_enabled=x.ai_enabled
     if content_type=="article_review":content_type="article"
     result=run_script(code)
-    inserted=0
-    from .core import Vulnerability
+    from .core import Vulnerability, log_run
     from .eligibility import evaluate
     from .review import Review, has_unknown_pending_review, resolve_unknown_reviews
     from .worker import upsert
     from .legacy_notify import send_vulnerability
-    from .core import log_run
+    run_id=_active_run.get()
     inserted=0
     primary=0
     secondary=0
@@ -175,13 +179,13 @@ def _collect_script(script_id:int):
     duplicates=[]
     pushed=[]
     pending=[]
+    events=[]
     collection_time=datetime.now().astimezone().isoformat(timespec="seconds")
-    for item in result["items"]:
+    for item_index,item in enumerate(result["items"]):
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
         if content_type=="vulnerability" and item.get("severity")=="未知" and item.get("cve"):
             from .collector import nvd_severity
-            from .core import Vulnerability
             with Session(engine) as check_db:
                 known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
             if not known:item["severity"]=nvd_severity(item["cve"])
@@ -199,6 +203,7 @@ def _collect_script(script_id:int):
         with Session(engine) as db:
             url_fingerprint=hashlib.md5(item["url"].encode("utf-8")).hexdigest()
             old=next((record for record in db.scalars(select(CrawlerFinding).where(CrawlerFinding.script_id==script_id)).all() if hashlib.md5(record.url.encode("utf-8")).hexdigest()==url_fingerprint),None)
+            existing_key=db.scalar(select(Vulnerability.id).where(Vulnerability.key==key))
             if old is None:
                 db.add(CrawlerFinding(script_id=script_id,url=item["url"],cve=item["cve"],title=item["title"],severity=item["severity"],payload=json.dumps(item,ensure_ascii=False)))
                 inserted+=1
@@ -208,14 +213,16 @@ def _collect_script(script_id:int):
                 old.title=item["title"]
                 old.severity=item["severity"]
                 old.payload=json.dumps(item,ensure_ascii=False)
-            # Shared persistence and CVE grouping; separate collection execution.
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
-            pending_upgrade = (content_type=="vulnerability" and tier=="primary" and item["severity"] in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
+            pending_upgrade=(content_type=="vulnerability" and tier=="primary" and item["severity"] in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
             notify=upsert(db,normalized,content_type=="vulnerability")
             if pending_upgrade:
                 notify=True
-            # Do not use CrawlerFinding URL existence as a second article push filter.
-            # The shared Vulnerability upsert owns notification/dedup decisions.
+            # Security articles have exactly one duplicate gate: same script + same URL
+            # (or its already-existing shared record). Duplicates are logged, never pushed.
+            article_duplicate=content_type in ("article","article_review") and (old is not None or existing_key is not None)
+            if article_duplicate:
+                notify=False
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review and content_type=="vulnerability" and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
@@ -229,27 +236,66 @@ def _collect_script(script_id:int):
         elif tier=="secondary":
             secondary+=1
         if tier=="secondary":pending.append({"title":item["title"],"cve":item["cve"]})
-        log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),keyword or "")
+
+        if content_type in ("article","article_review"):
+            event={"id":f"article-{script_id}-{item_index}","source":source,"title":item["title"],
+                   "cve":item.get("cve") or "","tier":"article","status":"","detail":"","url":item["url"]}
+            if article_duplicate:
+                event["status"]="重复跳过"
+                event["detail"]="重复文章：相同脚本下 URL 已采集，本次不重复推送"
+                log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
+                events.append(event)
+                continue
+            if not notify:
+                event["status"]="未推送"
+                event["detail"]="文章记录已存在且内容未触发新增通知"
+                log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
+                events.append(event)
+                continue
+            try:
+                outcome=send_vulnerability(normalized,ai_enabled=False)
+                if outcome and outcome.get("queued"):
+                    event["status"]="待合并推送"
+                    event["detail"]="已进入安全文章合并推送队列，等待本次采集结束统一发送"
+                elif outcome and any(outcome.values()):
+                    notified+=1
+                    event["status"]="推送成功"
+                    event["detail"]="通知渠道已确认发送"
+                    pushed.append({"title":item["title"],"cve":item.get("cve") or ""})
+                else:
+                    event["status"]="推送未成功"
+                    event["detail"]="没有有效通知渠道，或通知渠道未确认发送"
+                log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
+            except Exception as exc:
+                event["status"]="推送失败"
+                event["detail"]=str(exc)[:1000]
+                log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
+                notification_errors.append(str(exc)[:160])
+            events.append(event)
+            continue
+
+        log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),keyword or "",run_id=run_id)
         if notify:
             try:
                 outcome=send_vulnerability(normalized,ai_enabled=new_cve)
                 if outcome and outcome.get("queued"):
-                    log_run(normalized,tier,"待合并推送")
+                    log_run(normalized,tier,"待合并推送",run_id=run_id)
                 elif outcome and any(outcome.values()):
                     notified+=1
-                    log_run(normalized,tier,"推送成功")
+                    log_run(normalized,tier,"推送成功",run_id=run_id)
                     pushed.append({"title":item["title"],"cve":item["cve"]})
                     if tier=="primary" and item["severity"] in ("高危","严重"):
                         resolve_unknown_reviews(item.get("cve"))
                 else:
-                    log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
+                    log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤",run_id=run_id)
             except Exception as exc:
-                log_run(normalized,tier,"推送失败",str(exc))
+                log_run(normalized,tier,"推送失败",str(exc),run_id=run_id)
                 notification_errors.append(str(exc)[:160])
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],
             "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
-            "duplicates":duplicates,"pushed":pushed,"pending":pending,"stderr":result["stderr"]}}
+            "duplicates":duplicates,"pushed":pushed,"pending":pending,"events":events,
+            "stderr":result["stderr"]}}
 
 def collect_script(script_id:int):
     from .core import _active_run,begin_run,finish_run
