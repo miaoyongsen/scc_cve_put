@@ -214,9 +214,8 @@ def _collect_script(script_id:int):
             notify=upsert(db,normalized,content_type=="vulnerability")
             if pending_upgrade:
                 notify=True
-            # Repeated URLs are not sent again.
-            if content_type in ("article","article_review"):
-                notify=old is None
+            # Do not use CrawlerFinding URL existence as a second article push filter.
+            # The shared Vulnerability upsert owns notification/dedup decisions.
             vuln=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review and content_type=="vulnerability" and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
