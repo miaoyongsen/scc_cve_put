@@ -352,6 +352,20 @@ def collect_configured_sources(progress=None, mode="all"):
         delivery=flush_digest()
         summary["notifications"]+=delivery["notifications"]
         summary["errors"].extend(delivery["errors"])
+        # Resolve each queued article's final delivery state in the durable run summary.
+        article_delivery_errors=[e for e in delivery["errors"] if e.startswith("安全文章:")]
+        for source_detail in summary["details"]:
+            for event in source_detail.get("events") or []:
+                if event.get("status")!="待合并推送":
+                    continue
+                sent=any(p.get("title")==event.get("title") and p.get("from")==event.get("source")
+                         for p in delivery.get("pushed") or [])
+                if sent:
+                    event["status"]="推送成功"
+                    event["detail"]="企业微信安全文章合并推送成功"
+                elif article_delivery_errors:
+                    event["status"]="推送失败"
+                    event["detail"]="；".join(article_delivery_errors)[:1000]
         if delivery["pushed"]:
             for pushed in delivery["pushed"]:
                 for d in summary["details"]:
