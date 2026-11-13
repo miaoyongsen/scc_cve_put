@@ -82,6 +82,8 @@ def flush_digest():
                 # This helper enforces the 4096-byte limit on every HTTP request.
                 if not send_wecom_markdown(payload,url=webhook):
                     raise RuntimeError("机器人未确认发送成功")
+                from .notifications import mark_wecom_delivered
+                mark_wecom_delivered(part_entries)
                 result["notifications"]+=len(part_entries)
                 result["pushed"].extend(
                     {"title":item.get("title"),"cve":item.get("cve"),
