@@ -4,9 +4,11 @@ os.environ.setdefault("API_TOKEN", "test-only")
 from app.eligibility import evaluate
 
 
-def config(primary):
+def config(primary, severities=None):
+    if severities is None:
+        severities = {"严重", "高危", "未知"}
     return {
-        "severities": {"严重", "高危", "中危", "低危", "未知"},
+        "severities": set(severities),
         "hours": 0,
         "primary": primary,
     }
@@ -33,11 +35,29 @@ def test_unknown_severity_still_requires_primary_for_review():
     )
 
 
-def test_low_medium_severity_remain_filtered():
+def test_medium_low_rejected_when_unchecked_in_frontend():
     for severity in ("中危", "低危"):
         assert evaluate({"title": "Apache issue", "severity": severity}, config(["apache"])) == (
             None, None, "severity"
         )
+
+
+def test_medium_low_allowed_when_checked_in_frontend():
+    for severity in ("中危", "低危"):
+        assert evaluate(
+            {"title": "Apache issue", "severity": severity},
+            config(["apache"], {"严重", "高危", "中危", "低危", "未知"}),
+        ) == ("primary", "apache", None)
+
+
+def test_severity_filter_applies_even_when_no_keyword_configured():
+    assert evaluate({"title": "Any issue", "severity": "中危"}, config([])) == (
+        None, None, "severity"
+    )
+    assert evaluate(
+        {"title": "Any issue", "severity": "中危"},
+        config([], {"中危"}),
+    ) == ("primary", None, None)
 
 
 def test_empty_primary_retains_original_known_severity_fallback():
