@@ -65,9 +65,10 @@ def current():
 
 @router.get("")
 def get_config():
+    # Authenticated intranet administrators can view and edit the saved URLs.
     c=current()
-    c["has_webhook"]=bool(c.pop("wecom_webhook"))
-    c["has_error_webhook"]=bool(c.pop("error_wecom_webhook"))
+    c["has_webhook"]=bool(c["wecom_webhook"])
+    c["has_error_webhook"]=bool(c["error_wecom_webhook"])
     return {"code":0,"data":c}
 
 @router.put("")
