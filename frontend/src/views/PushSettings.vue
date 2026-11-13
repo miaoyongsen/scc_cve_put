@@ -1,21 +1,21 @@
 <template>
 <div style="max-width:950px;margin:35px auto;padding:20px">
 <n-space justify="space-between" align="center"><h2>推送配置</h2><n-button @click="$router.push('/sources')">返回来源配置</n-button></n-space>
-<n-alert type="info" style="margin-bottom:16px">一级情报自动推送，二级情报审核后推送。此处配置通知渠道及额外过滤规则；静默时间内跳过推送，不会自动补发。</n-alert>
+<n-alert type="info" style="margin-bottom:16px">符合条件的漏洞情报直接推送；缺少 CVE 或等级未知且命中关键词的进入人工审核。静默时间内跳过推送，不会自动补发。</n-alert>
 <n-card title="已保存的企业微信配置列表" style="margin-bottom:16px">
 <n-data-table :columns="savedColumns" :data="savedRows" :row-key="row=>row.id"/>
 </n-card>
 <n-card id="wecom-editor" title="企业微信机器人" style="margin-bottom:16px">
 <n-space align="center"><span>启用企业微信</span><n-switch v-model:value="form.wecom_enabled"/></n-space>
-<n-form-item label="机器人 Webhook（留空保留已保存密钥）"><n-input v-model:value="form.wecom_webhook" type="password" show-password-on="click" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
-<n-text depth="3">{{hasWebhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
+<n-form-item label="机器人 Webhook"><n-input v-model:value="form.wecom_webhook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
+<n-text depth="3">{{hasWebhook?'已保存，可直接查看或修改 Webhook':'尚未保存 Webhook'}}</n-text>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存配置</n-button><n-button :loading="testing" @click="test">发送测试消息</n-button></n-space>
 </n-card>
 <n-card id="error-wecom-editor" title="异常告警机器人（独立推送）" style="margin-bottom:16px">
 <n-alert type="info" style="margin-bottom:12px">采集失败、接口无法访问、爬虫报错、推送异常时发送错误详情，不发送普通情报。</n-alert>
 <n-space align="center"><span>启用异常告警</span><n-switch v-model:value="form.error_wecom_enabled"/></n-space>
-<n-form-item label="异常机器人 Webhook（留空保留已保存密钥）"><n-input v-model:value="form.error_wecom_webhook" type="password" show-password-on="click" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
-<n-text depth="3">{{hasErrorWebhook?'已保存异常告警 Webhook（不会回显）':'尚未保存异常告警 Webhook'}}</n-text>
+<n-form-item label="异常机器人 Webhook"><n-input v-model:value="form.error_wecom_webhook" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
+<n-text depth="3">{{hasErrorWebhook?'已保存，可直接查看或修改异常告警 Webhook':'尚未保存异常告警 Webhook'}}</n-text>
 <n-form-item label="异常告警 Markdown 模板（可编辑）" style="margin-top:14px">
 <n-input v-model:value="form.error_message_template" type="textarea" :rows="9" placeholder="输入异常告警模板"/>
 </n-form-item>
@@ -40,11 +40,11 @@ import {NCard,NSpace,NButton,NAlert,NFormItem,NInput,NSwitch,NText,NCheckbox,NCh
 const msg=useMessage(),saving=ref(false),testing=ref(false),hasWebhook=ref(false),hasErrorWebhook=ref(false),testingError=ref(false),levels=['严重','高危','中危','低危','未知']
 const savedRows=computed(()=>{
   const rows=[]
-  if(hasWebhook.value)rows.push({id:1,name:'企业微信情报机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）',target:'wecom-editor'})
-  if(hasErrorWebhook.value)rows.push({id:2,name:'企业微信异常告警机器人',status:form.value.error_wecom_enabled?'已启用':'已关闭',secret:'已保存（隐藏）',target:'error-wecom-editor'})
+  if(hasWebhook.value)rows.push({id:1,name:'企业微信情报机器人',status:form.value.wecom_enabled?'已启用':'已关闭',secret:form.value.wecom_webhook,target:'wecom-editor'})
+  if(hasErrorWebhook.value)rows.push({id:2,name:'企业微信异常告警机器人',status:form.value.error_wecom_enabled?'已启用':'已关闭',secret:form.value.error_wecom_webhook,target:'error-wecom-editor'})
   return rows
 })
-const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:row=>h(NButton,{size:'small',onClick:()=>document.getElementById(row.target)?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
+const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret',ellipsis:{tooltip:true}},{title:'操作',key:'actions',render:row=>h(NButton,{size:'small',onClick:()=>document.getElementById(row.target)?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
 
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const defaultErrorTemplate="## 🚨 SCC CVE 采集异常告警\n> **任务**：{task}\n> **时间**：{time}\n> **异常详情**：\n{details}\n\n> 请检查「运行记录」及对应采集源。"
@@ -81,7 +81,7 @@ await axios.put(url,body,{headers:authHeaders()});row.ai_enabled=value;msg.succe
 }catch(e){msg.error(e.response?.data?.detail||e.message)}}
 const http=axios.create({baseURL:'/api/v1/settings/push'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
-async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;hasErrorWebhook.value=d.has_error_webhook;form.value={...form.value,...d,wecom_webhook:'',error_wecom_webhook:''}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
+async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;hasErrorWebhook.value=d.has_error_webhook;form.value={...form.value,...d}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
 async function save(){saving.value=true;try{await http.put('',form.value);msg.success('配置已保存');await load()}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{saving.value=false}}
 async function test(){testing.value=true;try{await http.post('/test');msg.success('测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testing.value=false}}
 async function testError(){testingError.value=true;try{await http.post('/test-error');msg.success('异常测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testingError.value=false}}
