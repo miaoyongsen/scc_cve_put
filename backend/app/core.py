@@ -218,8 +218,12 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
         sort_column=(func.disclosure_timestamp(Vulnerability.disclosure)
                      if engine.dialect.name=="sqlite" else Vulnerability.disclosure)
     ordering=(sort_column.asc() if sort_order=="asc" else sort_column.desc()).nullslast()
+    from .review import Review
     with Session(engine) as db:
-        stmt=select(Vulnerability)
+        # A reviewed vulnerability is visible only after successful delivery.
+        # Pending, sending and rejected review rows remain in the review workflow.
+        hidden_ids=select(Review.vulnerability_id).where(Review.status!="approved")
+        stmt=select(Vulnerability).where(~Vulnerability.id.in_(hidden_ids))
         if severity:
             levels=[v for v in severity.split(",") if v in ("严重","高危","中危","低危","未知")]
             if levels:stmt=stmt.where(Vulnerability.severity.in_(levels))
@@ -252,9 +256,16 @@ def related_vulnerabilities(vuln_id:int):
     with Session(engine) as db:
         parent=db.get(Vulnerability,vuln_id)
         if not parent:raise HTTPException(404,"Not found")
+        from .review import Review
+        hidden_ids=select(Review.vulnerability_id).where(Review.status!="approved")
+        if db.scalar(select(Review.id).where(
+            Review.vulnerability_id==vuln_id,Review.status!="approved"
+        )) is not None:
+            raise HTTPException(404,"Not found")
         if not parent.cve:return {"code":0,"data":[],"message":"success"}
         rows=db.scalars(select(Vulnerability).where(
-            func.upper(Vulnerability.cve)==parent.cve.upper(),Vulnerability.id!=vuln_id
+            func.upper(Vulnerability.cve)==parent.cve.upper(),Vulnerability.id!=vuln_id,
+            ~Vulnerability.id.in_(hidden_ids)
         ).order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc())).all()
         return {"code":0,"data":[serialize(v) for v in rows],"message":"success"}
 
