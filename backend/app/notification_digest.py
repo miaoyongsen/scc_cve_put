@@ -41,10 +41,10 @@ def flush_digest():
             for item,_ in entries:log_run(item,"article" if kind=="article" else "direct","推送未成功","无有效企业微信渠道")
             continue
         header="## SCC CVE "+label+"汇总\n> 采集时间："+datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")+"\n> 共 "+str(len(entries))+" 条\n"
-        # WeCom markdown content is limited; keep one message per category when possible.
-        # If too many items, send bounded parts rather than silently truncating.
-        chunks=[]
-        chunk=header
+        # Build readable summary entries, then split by UTF-8 bytes.  The
+        # shared WeCom sender will further segment any single oversize entry.
+        # Never truncate an entry just to fit a message limit.
+        lines=[]
         for i,(item,message) in enumerate(entries,1):
             link=(item.get("references") or [item.get("url") or ""])[0]
             title=str(item.get("title") or "未命名").replace("\n"," ").strip()
@@ -55,27 +55,46 @@ def flush_digest():
             severity_label=badges.get(severity,"⚪")+" "+severity
             if severity in ("严重","高危"):
                 severity_label=badges[severity]+' <font color="warning">'+severity+"</font>"
-            line=f"\n> **{i}. {title[:100]}**\n> {severity_label} {cve} · {source[:50]}\n"
+            line=f"\n> **{i}. {title}**\n> {severity_label} {cve} · {source}\n"
             ai=message.partition("AI 研判（仅供参考）")[2].strip() if "AI 研判（仅供参考）" in message else ""
-            if ai:line+="> AI 研判："+(" ".join(ai.split())[:130])+"\n"
+            if ai:line+="> AI 研判："+" ".join(ai.split())+"\n"
             if link:line+="> [查看原文]("+str(link)+")\n"
-            if len(chunk)+len(line)>MAX_MARKDOWN and chunk!=header:
-                chunks.append(chunk);chunk=header
-            chunk+=line[:MAX_MARKDOWN-len(header)]
-        if chunk!=header:chunks.append(chunk)
-        try:
-            for idx,part in enumerate(chunks,1):
-                payload=part if len(chunks)==1 else part.replace(header,header+f"> 第 {idx}/{len(chunks)} 部分\n",1)
+            lines.append(line)
+
+        chunks=[]
+        chunk=header
+        chunk_entries=[]
+        for (item,_),line in zip(entries,lines):
+            if chunk_entries and len((chunk+line).encode("utf-8"))>MAX_MARKDOWN:
+                chunks.append((chunk,list(chunk_entries)))
+                chunk=header
+                chunk_entries=[]
+            chunk+=line
+            chunk_entries.append(item)
+        if chunk_entries:
+            chunks.append((chunk,chunk_entries))
+
+        for idx,(part,part_entries) in enumerate(chunks,1):
+            payload=part if len(chunks)==1 else part.replace(
+                header,header+f"> 第 {idx}/{len(chunks)} 部分\n",1
+            )
+            try:
+                # This helper enforces the 4096-byte limit on every HTTP request.
                 if not send_wecom_markdown(payload,url=webhook):
                     raise RuntimeError("机器人未确认发送成功")
-            result["notifications"]+=len(entries)
-            result["pushed"].extend({"title":item.get("title"),"cve":item.get("cve"),"from":item.get("from") or item.get("source")} for item,_ in entries)
-            for item,_ in entries:
-                log_run(item,"article" if kind=="article" else "direct","推送成功","合并推送")
-                if kind=="vulnerability" and item.get("severity") in ("高危","严重"):
-                    from .review import resolve_unknown_reviews
-                    resolve_unknown_reviews(item.get("cve"))
-        except Exception as exc:
-            result["errors"].append(label+": "+str(exc)[:300])
-            for item,_ in entries:log_run(item,"article" if kind=="article" else "direct","推送失败",str(exc)[:500])
+                result["notifications"]+=len(part_entries)
+                result["pushed"].extend(
+                    {"title":item.get("title"),"cve":item.get("cve"),
+                     "from":item.get("from") or item.get("source")}
+                    for item in part_entries
+                )
+                for item in part_entries:
+                    log_run(item,"article" if kind=="article" else "direct","推送成功","合并推送")
+                    if kind=="vulnerability" and item.get("severity") in ("高危","严重"):
+                        from .review import resolve_unknown_reviews
+                        resolve_unknown_reviews(item.get("cve"))
+            except Exception as exc:
+                result["errors"].append(label+f"（第 {idx}/{len(chunks)} 组）: "+str(exc)[:300])
+                for item in part_entries:
+                    log_run(item,"article" if kind=="article" else "direct","推送失败",str(exc)[:500])
     return result
