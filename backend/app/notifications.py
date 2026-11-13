@@ -50,8 +50,8 @@ def split_wecom_markdown(content: str, limit: int = _MARKDOWN_PART_BYTES):
                 continue
             fragment = line[:cutoff]
             # Keep markdown readable where possible.
-            if current and "\\n" in fragment:
-                newline_pos = fragment.rfind("\\n") + 1
+            if current and "\n" in fragment:
+                newline_pos = fragment.rfind("\n") + 1
                 if newline_pos:
                     cutoff = newline_pos
                     fragment = line[:cutoff]
@@ -70,7 +70,7 @@ def send_wecom_markdown(text: str, url=None):
     parts = split_wecom_markdown(content, _MARKDOWN_PART_BYTES - 80)
     total = len(parts)
     for idx, part in enumerate(parts, 1):
-        heading = f"> 消息分段 {idx}/{total}\\n" if total > 1 else ""
+        heading = f"> 消息分段 {idx}/{total}\n" if total > 1 else ""
         payload_content = heading + part
         if len(payload_content.encode("utf-8")) > 4096:
             raise ValueError("WeCom markdown part exceeds the 4096-byte limit")
