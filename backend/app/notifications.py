@@ -100,13 +100,15 @@ def mark_wecom_delivered(items):
     """Persist confirmed WeCom deliveries; never infer success from dedup flags."""
     from sqlalchemy import update
     from sqlalchemy.orm import Session
+    from datetime import datetime, timezone
     from .core import engine, Vulnerability
     keys = {str(item.get("key") or "") for item in items if item.get("key")}
     if not keys:
         return
+    sent_at=datetime.now(timezone.utc)
     with Session(engine) as db:
         for key in keys:
-            db.execute(update(Vulnerability).where(Vulnerability.key == key).values(wecom_sent=True))
+            db.execute(update(Vulnerability).where(Vulnerability.key == key).values(wecom_sent=True,wecom_sent_at=sent_at))
         db.commit()
 
 
