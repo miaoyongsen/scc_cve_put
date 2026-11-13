@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, select, delete, or_, func, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth, Vulnerability, RunRecord, serialize, log_run
-from .legacy_notify import send_vulnerability
 
 class Review(Base):
     __tablename__="vulnerability_reviews"
