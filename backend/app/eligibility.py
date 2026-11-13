@@ -25,6 +25,11 @@ def evaluate(item, config=None):
             "hours":lookback_hours(),
             "keywords":[x.casefold() for x in whitelist_keywords()],
         }
+    # Vulnerability intelligence must have a valid CVE. Security articles bypass
+    # evaluate() and are allowed to have no CVE.
+    cve=str(item.get("cve") or "").strip().upper()
+    if not re.fullmatch(r"CVE-\\d{4}-\\d{4,}", cve):
+        return None,None,"missing_cve"
     if (item.get("severity") or "未知") not in config["severities"]:
         return None,None,"severity"
     if config["hours"]:
