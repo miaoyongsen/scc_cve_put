@@ -130,7 +130,7 @@ def delete_pending(vulnerability_id:int):
     return {"code":0,"data":_delete_pending_records([vulnerability_id]),"message":"deleted"}
 
 
-VALID_CVE = re.compile(r"CVE-\\d{4}-\\d{4,}", re.IGNORECASE)
+VALID_CVE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
 VALID_SEVERITIES = {"严重", "高危", "中危", "低危", "未知"}
 
 
