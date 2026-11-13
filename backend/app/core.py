@@ -385,7 +385,7 @@ def start_refresh():
             raise HTTPException(409, "已有采集任务正在运行")
         job_id = uuid.uuid4().hex
         _collection_jobs.clear()
-        _collection_jobs[job_id] = {"status": "running", "summary": {"details": [], "items": 0, "primary": 0, "secondary": 0, "new": 0, "errors": []}}
+        _collection_jobs[job_id] = {"status": "running", "summary": {"details": [], "items": 0, "direct": 0, "review_count": 0, "new": 0, "errors": []}}
     def run():
         from .collector import collect_configured_sources
         def update(summary):
