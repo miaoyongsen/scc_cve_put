@@ -92,6 +92,33 @@ def begin_run(mode):
         db.add(row);db.commit();db.refresh(row)
         return row.id
 
+RUN_HISTORY_LIMIT=20
+
+
+def prune_collection_run_history(keep=RUN_HISTORY_LIMIT):
+    """Permanently retain only the newest completed collection-run histories.
+
+    This only affects collection_runs and the matching run_records. It never
+    deletes vulnerabilities, crawler findings, configured crawlers or reviews.
+    Running tasks are deliberately excluded from retention cleanup.
+    """
+    from sqlalchemy import delete
+    with Session(engine) as db:
+        expired_ids=db.scalars(
+            select(CollectionRun.id)
+            .where(CollectionRun.ended_at.is_not(None),CollectionRun.status!="running")
+            .order_by(CollectionRun.id.desc())
+            .offset(keep)
+        ).all()
+        count=0
+        for pos in range(0,len(expired_ids),300):
+            ids=expired_ids[pos:pos+300]
+            db.execute(delete(RunRecord).where(RunRecord.run_id.in_(ids)))
+            count+=db.execute(delete(CollectionRun).where(CollectionRun.id.in_(ids))).rowcount or 0
+        db.commit()
+        return count
+
+
 def finish_run(run_id,status,summary):
     import json
     import logging
@@ -104,6 +131,10 @@ def finish_run(run_id,status,summary):
             row.status=status
             row.summary=json.dumps(summary,ensure_ascii=False,default=str)
             db.commit()
+    try:
+        prune_collection_run_history()
+    except Exception:
+        logging.getLogger(__name__).exception("Failed to prune old collection run history")
     logging.getLogger(__name__).info("collection_run_event %s",json.dumps({
         "event":"collection_run_finished","run_id":run_id,"status":status,
         "items":summary.get("items",0),"new":summary.get("new",0),
