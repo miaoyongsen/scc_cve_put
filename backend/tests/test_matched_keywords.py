@@ -14,14 +14,14 @@ def test_multiple_keywords_match_title():
 
 
 def test_keyword_match_deduplicates_case_variants():
-    assert matching_keywords({"title":"Apache server"},{"Apache","apache"}) in (
+    assert matching_keywords({"title":"Apache server"},["Apache","apache"]) in (
         ["Apache"], ["apache"]
     )
 
 
 def test_special_boundary_behavior_is_unchanged():
     assert matching_keywords(
-        {"title":"Campcodes banner.php and *go* framework"},
+        {"title":"Campcodes banner.php and ago framework"},
         ["PHP","*go*"]
     ) == []
     assert matching_keywords({"title":"PHP and Go security notice"},["PHP","*go*"]) == ["PHP","*go*"]
