@@ -1,9 +1,10 @@
 """Manual review only for unknown-severity CVE intelligence."""
 from datetime import datetime, timezone
+import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, String, DateTime, ForeignKey, select, delete, or_
+from sqlalchemy import Integer, String, DateTime, ForeignKey, select, delete, or_, func
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth, Vulnerability, RunRecord, serialize, log_run
 from .legacy_notify import send_vulnerability
@@ -129,6 +130,54 @@ def delete_pending(vulnerability_id:int):
     return {"code":0,"data":_delete_pending_records([vulnerability_id]),"message":"deleted"}
 
 
+VALID_CVE = re.compile(r"CVE-\\d{4}-\\d{4,}", re.IGNORECASE)
+VALID_SEVERITIES = {"严重", "高危", "中危", "低危", "未知"}
+
+
+class ReviewEditInput(BaseModel):
+    cve: str = Field(default="", max_length=40)
+    severity: str = Field(default="未知", max_length=20)
+
+
+def _validate_review_fields(cve: str, severity: str, complete: bool = False):
+    code=(cve or "").strip().upper()
+    if code and not VALID_CVE.fullmatch(code):
+        raise HTTPException(422, "CVE 编号格式错误，请使用 CVE-2026-12345 格式")
+    if severity not in VALID_SEVERITIES:
+        raise HTTPException(422, "危害等级不合法")
+    if complete and (not code or severity == "未知"):
+        raise HTTPException(422, "请先补充有效 CVE 编号并选择明确的危害等级")
+    return code
+
+
+def _check_cve_unique(db, cve: str, exclude_id: int):
+    if cve:
+        existing=db.scalar(select(Vulnerability.id).where(
+            func.upper(Vulnerability.cve)==cve, Vulnerability.id!=exclude_id
+        ).limit(1))
+        if existing is not None:
+            raise HTTPException(409, "CVE 已存在于数据库中，不能重复保存")
+
+
+@router.patch("/{vulnerability_id}")
+def edit_pending(vulnerability_id: int, body: ReviewEditInput):
+    cve=_validate_review_fields(body.cve, body.severity)
+    with Session(engine) as db:
+        review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
+        if not review or review.status!="pending":
+            raise HTTPException(409, "该记录不是待审核状态，请刷新列表")
+        vuln=db.get(Vulnerability,vulnerability_id)
+        if not vuln:
+            raise HTTPException(404, "漏洞记录不存在")
+        _check_cve_unique(db,cve,vulnerability_id)
+        vuln.cve=cve
+        vuln.severity=body.severity
+        db.commit()
+        return {"code":0,"data":{"id":vuln.id,"cve":vuln.cve,
+            "severity":vuln.severity,"ready":bool(cve and vuln.severity!="未知")},
+            "message":"saved"}
+
+
 @router.post("/{vulnerability_id}/approve")
 def approve(vulnerability_id:int):
     with Session(engine) as db:
@@ -136,6 +185,8 @@ def approve(vulnerability_id:int):
         if not review or review.status!="pending":raise HTTPException(409,"Not pending approval")
         vuln=db.get(Vulnerability,vulnerability_id)
         if not vuln:raise HTTPException(404,"Vulnerability not found")
+        cve=_validate_review_fields(vuln.cve,vuln.severity,complete=True)
+        _check_cve_unique(db,cve,vulnerability_id)
         item=serialize(vuln)
         # Mark processing first: prevents repeat approval and automatic requeue.
         review.status="sending"
