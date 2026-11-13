@@ -25,11 +25,6 @@ def evaluate(item, config=None):
             "hours":lookback_hours(),
             "keywords":[x.casefold() for x in whitelist_keywords()],
         }
-    # Vulnerability intelligence must have a valid CVE. Security articles bypass
-    # evaluate() and are allowed to have no CVE.
-    cve=str(item.get("cve") or "").strip().upper()
-    if not re.fullmatch(r"CVE-\d{4}-\d{4,}", cve):
-        return None,None,"missing_cve"
     if (item.get("severity") or "未知") not in config["severities"]:
         return None,None,"severity"
     if config["hours"]:
@@ -48,9 +43,13 @@ def evaluate(item, config=None):
     title=(item.get("title") or "").casefold()
     direct=next((word for word in config["keywords"] if keyword_matches(title,word)),None)
     severity=item.get("severity") or "未知"
-    if severity == "未知":
+    cve=str(item.get("cve") or "").strip().upper()
+    has_cve=bool(re.fullmatch(r"CVE-\d{4}-\d{4,}",cve))
+    # Either a missing CVE or unknown severity requires keyword-matched
+    # manual review, never a direct push.
+    if not has_cve or severity=="未知":
         if direct:
-            return "review","等级未知",None
+            return "review","缺少CVE" if not has_cve else "等级未知",None
         return None,None,"keyword"
     if direct:return "direct",direct,None
     if config["keywords"]:
