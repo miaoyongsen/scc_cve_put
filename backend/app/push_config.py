@@ -12,6 +12,7 @@ class PushConfig(Base):
     wecom_webhook:Mapped[str]=mapped_column(String(1000),default="")
     error_wecom_enabled:Mapped[bool]=mapped_column(Boolean,default=False)
     error_wecom_webhook:Mapped[str]=mapped_column(String(1000),default="")
+    error_message_template:Mapped[str]=mapped_column(String(8000),default="## 🚨 SCC CVE 采集异常告警\n> **任务**：{task}\n> **时间**：{time}\n> **异常详情**：\n{details}\n\n> 请检查「运行记录」及对应采集源。")
     severity_filter:Mapped[str]=mapped_column(String(200),default="")
     source_filter:Mapped[str]=mapped_column(String(2000),default="")
     quiet_start:Mapped[str]=mapped_column(String(5),default="")
@@ -31,6 +32,13 @@ for column,ddl in (("error_wecom_enabled","BOOLEAN NOT NULL DEFAULT 0"),("error_
     if column not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE push_config ADD COLUMN "+column+" "+ddl))
+if "error_message_template" not in {c["name"] for c in inspect(engine).get_columns("push_config")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE push_config ADD COLUMN error_message_template VARCHAR(8000)"))
+
+DEFAULT_ERROR_TEMPLATE="## 🚨 SCC CVE 采集异常告警\n> **任务**：{task}\n> **时间**：{time}\n> **异常详情**：\n{details}\n\n> 请检查「运行记录」及对应采集源。"
+ERROR_TEMPLATE_FIELDS={"task","time","details"}
+
 router=APIRouter(prefix="/api/v1/settings/push",dependencies=[Depends(auth)])
 DEFAULT_ARTICLE_TEMPLATE="## WatchVuln 安全文章\\n> **标题**：{title}\\n> **CVE**：{cve}\\n> **危害等级**：{severity}\\n> **来源**：{source}\\n> **采集时间**：{disclosure}\\n> **原始数据**：[查看原文]({url})"
 class PushInput(BaseModel):
@@ -38,6 +46,7 @@ class PushInput(BaseModel):
     wecom_enabled:bool=False
     error_wecom_enabled:bool=False
     error_wecom_webhook:str=""
+    error_message_template:str=DEFAULT_ERROR_TEMPLATE
     wecom_webhook:str=""
     severity_filter:list[str]=[]
     source_filter:str=""
@@ -52,7 +61,7 @@ DEFAULT_TEMPLATE="## WatchVuln 漏洞情报\\n> **标题**：{title}\\n> **CVE**
 def current():
     with Session(engine) as db:
         row=db.get(PushConfig,1)
-        return dict(error_wecom_enabled=bool(row.error_wecom_enabled) if row else False,error_wecom_webhook=row.error_wecom_webhook if row else "",wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE),article_template=(row.article_template if row and row.article_template else DEFAULT_ARTICLE_TEMPLATE))
+        return dict(error_wecom_enabled=bool(row.error_wecom_enabled) if row else False,error_wecom_webhook=row.error_wecom_webhook if row else "",wecom_enabled=row.wecom_enabled if row else False,wecom_webhook=row.wecom_webhook if row else "",severity_filter=(row.severity_filter.split(",") if row and row.severity_filter else []),source_filter=row.source_filter if row else "",quiet_start=row.quiet_start if row else "",quiet_end=row.quiet_end if row else "",dedup_hours=row.dedup_hours if row else 0,error_message_template=(row.error_message_template if row and row.error_message_template else DEFAULT_ERROR_TEMPLATE),message_template=(row.message_template if row and row.message_template else DEFAULT_TEMPLATE),article_template=(row.article_template if row and row.article_template else DEFAULT_ARTICLE_TEMPLATE))
 
 @router.get("")
 def get_config():
@@ -75,11 +84,21 @@ def save_config(body:PushInput):
         raise HTTPException(422,"去重时长不支持")
     if any(x and not re.fullmatch(r"(?:[01]\\d|2[0-3]):[0-5]\\d",x) for x in (body.quiet_start,body.quiet_end)):
         raise HTTPException(422,"静默时间应为 HH:MM")
+    from string import Formatter
+    if not body.error_message_template.strip() or len(body.error_message_template)>8000:
+        raise HTTPException(422,"异常告警模板不能为空或超过 8000 字符")
+    try:
+        variables={field for _,field,_,_ in Formatter().parse(body.error_message_template) if field}
+    except ValueError:
+        raise HTTPException(422,"异常告警模板的花括号格式不正确")
+    if variables-ERROR_TEMPLATE_FIELDS:
+        raise HTTPException(422,"异常告警模板存在不支持的变量："+",".join(sorted(variables-ERROR_TEMPLATE_FIELDS)))
     with Session(engine) as db:
         row=db.get(PushConfig,1)
         if row is None:row=PushConfig(id=1);db.add(row)
         row.wecom_enabled=body.wecom_enabled
         row.error_wecom_enabled=body.error_wecom_enabled
+        row.error_message_template=body.error_message_template
         if body.error_wecom_webhook:row.error_wecom_webhook=body.error_wecom_webhook
         if body.wecom_webhook:row.wecom_webhook=body.wecom_webhook
         row.severity_filter=",".join(body.severity_filter)
