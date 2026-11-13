@@ -74,13 +74,43 @@ def test_review_edit_duplicate_gate_and_visibility(isolated_db, monkeypatch):
         assert refreshed.cve == "CVE-2026-23456"
         assert refreshed.severity == "高危"
 
-    monkeypatch.setattr(review, "send_vulnerability", lambda *args, **kwargs: {"wechat": True})
-    review.approve(pending_id)
-    assert pending_id in visible_ids()
+    from app import notification_digest, notifications
+    monkeypatch.setattr(notification_digest, "engine", isolated_db)
+    monkeypatch.setattr(notifications, "engine", isolated_db, raising=False)
+    monkeypatch.setattr("app.push_config.current", lambda: {
+        "wecom_enabled": True, "wecom_webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    sent=[]
+    monkeypatch.setattr(notification_digest, "send_wecom_markdown",
+                        lambda content, url=None: sent.append(content) or True)
+    monkeypatch.setattr(notifications, "mark_wecom_delivered",
+                        lambda items: None)
+    monkeypatch.setattr(notification_digest, "log_run", lambda *args, **kwargs: None)
+    # Manual confirmation only queues, without contacting WeCom.
+    queued=review.approve(pending_id)
+    assert queued["data"]["status"]=="queued"
+    assert sent==[]
+    assert pending_id not in visible_ids()
     with Session(isolated_db) as db:
+        assert db.scalar(select(review.Review.status).where(
+            review.Review.vulnerability_id == pending_id
+        )) == "queued"
         assert db.scalar(select(review.Review.manual_fields).where(
             review.Review.vulnerability_id == pending_id
         )) is True
+    # The next collection digest delivers even when it has no new RSS items.
+    token=notification_digest.begin_digest()
+    try:
+        delivery=notification_digest.flush_digest()
+        assert delivery["notifications"]==1
+    finally:
+        notification_digest.end_digest(token)
+    assert len(sent)==1
+    assert pending_id in visible_ids()
+    with Session(isolated_db) as db:
+        assert db.scalar(select(review.Review.status).where(
+            review.Review.vulnerability_id == pending_id
+        )) == "approved"
 
 
 def test_unknown_severity_not_approvable(isolated_db):
@@ -98,3 +128,33 @@ def test_unknown_severity_not_approvable(isolated_db):
     with pytest.raises(HTTPException) as error:
         review.approve(pending_id)
     assert error.value.status_code == 422
+
+
+def test_failed_next_digest_keeps_review_queued(isolated_db, monkeypatch):
+    from app import notification_digest
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="retry-item",title="Test retry",cve="CVE-2026-88888",
+                                severity="高危",source="test")
+        db.add(vuln)
+        db.flush()
+        vuln_id=vuln.id
+        db.add(review.Review(vulnerability_id=vuln_id,status="pending"))
+        db.commit()
+    review.approve(vuln_id)
+    monkeypatch.setattr("app.push_config.current", lambda: {
+        "wecom_enabled": True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    monkeypatch.setattr(notification_digest, "log_run", lambda *args, **kwargs: None)
+    monkeypatch.setattr(notification_digest, "send_wecom_markdown",
+                        lambda content,url=None: False)
+    token=notification_digest.begin_digest()
+    try:
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==0
+    assert result["errors"]
+    with Session(isolated_db) as db:
+        assert db.scalar(select(review.Review.status).where(
+            review.Review.vulnerability_id==vuln_id
+        ))=="queued"
