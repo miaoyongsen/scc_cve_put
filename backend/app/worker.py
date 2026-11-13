@@ -50,6 +50,16 @@ def upsert(db: Session, item: dict, enable_cve_filter: bool):
         db.add(row)
         db.commit()
         return not duplicate
+    # Values manually completed by a reviewer must survive subsequent source refreshes.
+    # The manual_fields marker is stored on the existing Review record.
+    from .review import Review
+    manually_completed = db.scalar(select(Review.id).where(
+        Review.vulnerability_id == existing.id,
+        Review.manual_fields.is_(True)
+    ).limit(1)) is not None
+    if manually_completed:
+        cve = existing.cve
+        severity = existing.severity
     old_tags = json.loads(existing.tags or "[]")
     changed = existing.severity != severity or not same_strings(old_tags, tags)
     should_notify = changed
