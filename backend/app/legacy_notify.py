@@ -131,6 +131,9 @@ def send_vulnerability(item, ai_enabled=None):
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
         result["wechat"]=send_wecom_markdown(message,url=webhook or None)
+        if result["wechat"]:
+            from .notifications import mark_wecom_delivered
+            mark_wecom_delivered([item])
     if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
         result["email"]=send_smtp(item)
     return result
