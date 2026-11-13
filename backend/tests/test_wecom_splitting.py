@@ -60,13 +60,13 @@ def test_long_single_message_does_not_leave_tiny_orphan_tail():
 
 def test_digest_groups_keep_complete_vulnerability_records():
     from app.notification_digest import build_digest_chunks, _bytes
-    header="## SCC CVE 漏洞情报汇总\\n> 共 4 条\\n"
+    header="## SCC CVE 漏洞情报汇总\n> 共 4 条\n"
     entries=[({"key":str(i),"title":"Title "+str(i)}, "details") for i in range(4)]
     lines=[
-        "\\n> **1. 漏洞一**\\n" + "描述" * 350,
-        "\\n> **2. 漏洞二**\\n" + "描述" * 280,
-        "\\n> **3. 漏洞三**\\n" + "描述" * 330,
-        "\\n> **4. 漏洞四**\\n" + "描述" * 270,
+        "\n> **1. 漏洞一**\n" + "描述" * 350,
+        "\n> **2. 漏洞二**\n" + "描述" * 280,
+        "\n> **3. 漏洞三**\n" + "描述" * 330,
+        "\n> **4. 漏洞四**\n" + "描述" * 270,
     ]
     chunks=build_digest_chunks(header, entries, lines)
     assert len(chunks)>1
@@ -80,7 +80,7 @@ def test_digest_groups_keep_complete_vulnerability_records():
 
 def test_digest_single_oversized_entry_is_isolated():
     from app.notification_digest import build_digest_chunks
-    header="## 汇总\\n"
+    header="## 汇总\n"
     entries=[({"key":"a"}, ""),({"key":"b"}, ""),({"key":"c"}, "")]
     lines=["常规" * 80, "极长" * 1400, "正常" * 90]
     chunks=build_digest_chunks(header, entries, lines)
