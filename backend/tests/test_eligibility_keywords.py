@@ -69,20 +69,37 @@ def test_empty_keywords_retains_original_known_severity_fallback():
     )
 
 
-def test_vulnerability_without_cve_is_always_rejected():
-    assert evaluate({"title": "Apache critical security bulletin", "severity": "严重", "cve": ""}, config(["apache"])) == (
-        None, None, "missing_cve"
-    )
+def test_no_cve_matching_keyword_goes_to_review():
+    for severity in ("严重", "高危", "未知"):
+        assert evaluate(
+            {"title": "Apache security bulletin", "severity": severity, "cve": ""},
+            config(["apache"]),
+        ) == ("review", "缺少CVE", None)
 
 
-def test_invalid_cve_is_rejected():
-    for bad in ("CVE-2026", "CVE-2026-abcd", "not-a-cve"):
-        assert evaluate({"title": "Apache flaw", "severity": "高危", "cve": bad}, config(["apache"])) == (
-            None, None, "missing_cve"
-        )
+def test_no_cve_without_matching_keyword_is_filtered():
+    assert evaluate(
+        {"title": "Unrelated security bulletin", "severity": "高危", "cve": ""},
+        config(["apache"]),
+    ) == (None, None, "keyword")
+
+
+def test_invalid_cve_with_keyword_goes_to_review():
+    assert evaluate(
+        {"title": "Apache flaw", "severity": "高危", "cve": "not-a-cve"},
+        config(["apache"]),
+    ) == ("review", "缺少CVE", None)
+
+
+def test_no_cve_does_not_go_direct_when_keyword_list_empty():
+    assert evaluate(
+        {"title": "Security notice", "severity": "严重", "cve": ""},
+        config([]),
+    ) == (None, None, "keyword")
 
 
 def test_valid_cve_is_accepted():
-    assert evaluate({"title": "Apache flaw", "severity": "高危", "cve": "CVE-2026-12345"}, config(["apache"])) == (
-        "direct", "apache", None
-    )
+    assert evaluate(
+        {"title": "Apache flaw", "severity": "高危", "cve": "CVE-2026-12345"},
+        config(["apache"]),
+    ) == ("direct", "apache", None)
