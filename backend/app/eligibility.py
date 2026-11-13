@@ -2,7 +2,7 @@
 import re
 from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
-from .collection_config import whitelist_keywords, review_keywords, lookback_hours, allowed_severities
+from .collection_config import whitelist_keywords, lookback_hours, allowed_severities
 
 def keyword_matches(title, word):
     """*phrase* matches complete words in order, allowing whitespace between them."""
@@ -18,13 +18,12 @@ def keyword_matches(title, word):
     return word in title
 
 def evaluate(item, config=None):
-    """Return (tier, matched_keyword, rejection_reason). Tier is primary/secondary/none."""
+    """Return (tier, matched_keyword, rejection_reason). Secondary is only for unknown severity."""
     if config is None:
         config={
             "severities":set(allowed_severities()),
             "hours":lookback_hours(),
             "primary":[x.casefold() for x in whitelist_keywords()],
-            "secondary":[x.casefold() for x in review_keywords()],
         }
     if (item.get("severity") or "未知") not in config["severities"]:
         return None,None,"severity"
@@ -43,7 +42,6 @@ def evaluate(item, config=None):
             return None,None,"date"
     title=(item.get("title") or "").casefold()
     direct=next((word for word in config["primary"] if keyword_matches(title,word)),None)
-    manual=next((word for word in config["secondary"] if keyword_matches(title,word)),None)
     severity=item.get("severity") or "未知"
     if severity in ("中危", "低危"):
         return None,None,"severity"
@@ -52,7 +50,6 @@ def evaluate(item, config=None):
             return "secondary","等级未知",None
         return None,None,"keyword"
     if direct:return "primary",direct,None
-    if manual:return "secondary",manual,None
-    if config["primary"] or config["secondary"]:
+    if config["primary"]:
         return None,None,"keyword"
     return "primary",None,None
