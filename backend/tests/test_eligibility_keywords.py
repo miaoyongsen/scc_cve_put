@@ -4,29 +4,29 @@ os.environ.setdefault("API_TOKEN", "test-only")
 from app.eligibility import evaluate
 
 
-def config(primary, severities=None):
+def config(keywords, severities=None):
     if severities is None:
         severities = {"严重", "高危", "未知"}
     return {
         "severities": set(severities),
         "hours": 0,
-        "primary": primary,
+        "keywords": keywords,
     }
 
 
-def test_high_severity_primary_keyword_pushes():
+def test_high_severity_matching_keyword_pushes():
     assert evaluate({"title": "Apache remote code execution", "severity": "高危"}, config(["apache"])) == (
         "direct", "apache", None
     )
 
 
-def test_high_severity_non_primary_keyword_is_filtered():
+def test_high_severity_without_keyword_is_filtered():
     assert evaluate({"title": "Jenkins remote code execution", "severity": "高危"}, config(["apache"])) == (
         None, None, "keyword"
     )
 
 
-def test_unknown_severity_still_requires_primary_for_review():
+def test_unknown_severity_still_requires_keyword_for_review():
     assert evaluate({"title": "Apache issue", "severity": "未知"}, config(["apache"])) == (
         "review", "等级未知", None
     )
@@ -60,7 +60,7 @@ def test_severity_filter_applies_even_when_no_keyword_configured():
     ) == ("direct", None, None)
 
 
-def test_empty_primary_retains_original_known_severity_fallback():
+def test_empty_keywords_retains_original_known_severity_fallback():
     assert evaluate({"title": "Any issue", "severity": "严重"}, config([])) == (
         "direct", None, None
     )
