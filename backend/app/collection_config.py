@@ -49,11 +49,6 @@ def allowed_severities():
         row=db.get(CollectionConfig,1)
         return (row.allowed_severities if row else '严重,高危,中危,低危,未知').split(',') if row else ['严重','高危','中危','低危','未知']
 
-def review_keywords():
-    with Session(engine) as db:
-        row=db.get(CollectionConfig,1)
-        return [x.strip() for x in (row.review_keywords if row else '').split(',') if x.strip()]
-
 def lookback_hours():
     with Session(engine) as db:
         row=db.get(CollectionConfig,1)
@@ -86,13 +81,12 @@ class CollectionInput(BaseModel):
     whitelist: str=Field(default='',max_length=2000)
     lookback_hours: int=Field(default=24)
     article_lookback_hours: int=Field(default=24)
-    review_keywords: str=Field(default='',max_length=3000)
     allowed_severities: list[str]=Field(default_factory=lambda:['严重','高危','中危','低危','未知'])
 
 @router.get("")
 def get_collection():
     with Session(engine) as db:
-        return {"code":0,"data":{"interval_minutes":interval_minutes(),"article_interval_minutes":article_interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"article_lookback_hours":article_lookback_hours(),"review_keywords":(db.get(CollectionConfig,1).review_keywords if db.get(CollectionConfig,1) else ""),"allowed_severities":allowed_severities()},"message":"success"}
+        return {"code":0,"data":{"interval_minutes":interval_minutes(),"article_interval_minutes":article_interval_minutes(),"options":list(ALLOWED_INTERVALS),"whitelist":(db.get(CollectionConfig,1).whitelist if db.get(CollectionConfig,1) else ""),"lookback_hours":lookback_hours(),"article_lookback_hours":article_lookback_hours(),"allowed_severities":allowed_severities()},"message":"success"}
 
 @router.put("")
 def set_collection(body:CollectionInput):
@@ -116,7 +110,6 @@ def set_collection(body:CollectionInput):
         row.whitelist=body.whitelist
         row.lookback_hours=body.lookback_hours
         row.article_lookback_hours=body.article_lookback_hours
-        row.review_keywords=body.review_keywords
         row.allowed_severities=','.join(normalized)
         db.commit()
     from .scheduler import wakeup
