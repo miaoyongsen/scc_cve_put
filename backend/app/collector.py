@@ -222,6 +222,9 @@ def _collect_configured_sources(progress=None):
                         known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
                     if not known:item["severity"]=nvd_severity(item["cve"])
                 tier,matched,rejected=evaluate(item)
+                if not rejected:
+                    from .eligibility import matching_keywords
+                    item["matched_keywords"]=matching_keywords(item)
                 if rejected:
                     field={"severity":"filtered_severity","date":"filtered_date",
                            "missing_date":"missing_date","keyword":"filtered_keyword"}[rejected]
