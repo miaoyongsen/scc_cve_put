@@ -192,10 +192,6 @@ def _collect_script(script_id:int):
         tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
         if rejected:
             filtered+=1
-            if rejected=="missing_cve":
-                log_run({"title":item.get("title"),"source":source,"cve":item.get("cve"),
-                         "url":item.get("url")},"filtered","跳过",
-                        "漏洞情报缺少有效 CVE",run_id=run_id)
             continue
         key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
         normalized={"key":key,"title":item["title"],"description":item.get("description") or "",
@@ -267,7 +263,7 @@ def _collect_script(script_id:int):
             if review and content_type=="vulnerability" and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
                 notify=False
             elif tier=="review" and content_type=="vulnerability":
-                db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or ""))
+                db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or "待人工确认"))
                 db.commit()
                 notify=False
         if tier=="direct":
