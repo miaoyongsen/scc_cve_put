@@ -13,7 +13,6 @@ class CollectionConfig(Base):
     interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
     article_interval_minutes: Mapped[int]=mapped_column(Integer,default=60,nullable=False)
     allowed_severities: Mapped[str]=mapped_column(String(200),default='严重,高危,中危,低危,未知',nullable=False)
-    review_keywords: Mapped[str]=mapped_column(String(3000),default='',nullable=False)
     lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
     article_lookback_hours: Mapped[int]=mapped_column(Integer,default=24,nullable=False)
     whitelist: Mapped[str]=mapped_column(String(2000),default='',nullable=False)
@@ -35,10 +34,6 @@ if 'lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('coll
 if 'article_lookback_hours' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
         conn.execute(text('ALTER TABLE collection_config ADD COLUMN article_lookback_hours INTEGER NOT NULL DEFAULT 24'))
-
-if 'review_keywords' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
-    with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE collection_config ADD COLUMN review_keywords VARCHAR(3000) NOT NULL DEFAULT ''"))
 
 if 'allowed_severities' not in {x['name'] for x in inspect(engine).get_columns('collection_config')}:
     with engine.begin() as conn:
