@@ -16,6 +16,13 @@
 <n-space align="center"><span>启用异常告警</span><n-switch v-model:value="form.error_wecom_enabled"/></n-space>
 <n-form-item label="异常机器人 Webhook（留空保留已保存密钥）"><n-input v-model:value="form.error_wecom_webhook" type="password" show-password-on="click" placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."/></n-form-item>
 <n-text depth="3">{{hasErrorWebhook?'已保存异常告警 Webhook（不会回显）':'尚未保存异常告警 Webhook'}}</n-text>
+<n-form-item label="异常告警 Markdown 模板（可编辑）" style="margin-top:14px">
+<n-input v-model:value="form.error_message_template" type="textarea" :rows="9" placeholder="输入异常告警模板"/>
+</n-form-item>
+<n-text depth="3">支持变量：{task} 任务名、{time} 告警时间、{details} 错误详情。直接换行即可，不需要输入 \\n。</n-text>
+<n-space style="margin-top:10px"><n-button size="small" @click="resetErrorTemplate">恢复默认模板（保存后生效）</n-button></n-space>
+<h3>异常告警预览</h3>
+<pre style="white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7fa;padding:14px;border-radius:6px">{{errorPreview}}</pre>
 <n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存异常机器人配置</n-button><n-button :loading="testingError" @click="testError">发送异常测试消息</n-button></n-space>
 </n-card>
 <n-card title="AI 研判联动"><n-alert type="info">只使用 AI 配置中的全局开关，研判完成后与漏洞情报合并为一条消息推送。</n-alert><n-button @click="$router.push('/ai-settings')">AI 研判配置</n-button></n-card><n-card title="推送规则">
@@ -40,8 +47,17 @@ const savedRows=computed(()=>{
 const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'status'},{title:'Webhook',key:'secret'},{title:'操作',key:'actions',render:row=>h(NButton,{size:'small',onClick:()=>document.getElementById(row.target)?.scrollIntoView({behavior:'smooth'})},()=> '编辑')}]
 
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
+const defaultErrorTemplate="## 🚨 SCC CVE 采集异常告警\n> **任务**：{task}\n> **时间**：{time}\n> **异常详情**：\n{details}\n\n> 请检查「运行记录」及对应采集源。"
 const defaultArticleTemplate="## WatchVuln 安全文章\n> **标题**：{title}\n> **CVE**：{cve}\n> **危害等级**：{severity}\n> **来源**：{source}\n> **采集时间**：{disclosure}\n> **原始数据**：[查看原文]({url})"
-const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
+const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',error_message_template:defaultErrorTemplate,severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
+function resetErrorTemplate(){form.value.error_message_template=defaultErrorTemplate}
+const errorPreview=computed(()=>{
+  const sample={task:'统一采集（RSS + Python）（部分失败）',time:'2026-11-13 15:59:11 +0800',
+    details:'> • 奇安信cve采集：408，爬虫执行超过35秒\\n> • 来源：奇安信cve采集；HTTP：未知'}
+  let result=(form.value.error_message_template||'').replace(/\\\\n/g,'\\n')
+  for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value)
+  return result
+})
 function resetArticleTemplate(){form.value.article_template=defaultArticleTemplate}
 const articlePreview=computed(()=>{const sample={title:"示例安全文章",cve:"CVE-2026-12345",severity:"高危",source:"安全研究团队",disclosure:"2026-10-28 08:38:00",description:"文章摘要",url:"https://example.com"};let result=(form.value.article_template||"").replace(/\\\\+n/g,"\n");for(const [key,value] of Object.entries(sample))result=result.split("{"+key+"}").join(value);return result})
 function resetTemplate(){form.value.message_template=defaultTemplate}
