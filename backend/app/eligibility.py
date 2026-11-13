@@ -18,7 +18,7 @@ def keyword_matches(title, word):
     return word in title
 
 def evaluate(item, config=None):
-    """Return (tier, matched_keyword, rejection_reason). Secondary is only for unknown severity."""
+    """Return (tier, matched_keyword, rejection_reason). Severity eligibility follows UI settings."""
     if config is None:
         config={
             "severities":set(allowed_severities()),
@@ -43,8 +43,6 @@ def evaluate(item, config=None):
     title=(item.get("title") or "").casefold()
     direct=next((word for word in config["primary"] if keyword_matches(title,word)),None)
     severity=item.get("severity") or "未知"
-    if severity in ("中危", "低危"):
-        return None,None,"severity"
     if severity == "未知":
         if direct:
             return "secondary","等级未知",None
