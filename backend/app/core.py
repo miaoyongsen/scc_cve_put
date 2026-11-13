@@ -56,6 +56,7 @@ class Vulnerability(Base):
     pushed: Mapped[bool] = mapped_column(Boolean, default=False)
     # True only after the WeCom webhook confirms delivery; NULL for legacy rows.
     wecom_sent: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
+    wecom_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     content_type: Mapped[str] = mapped_column(String(30), default="vulnerability", nullable=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -137,6 +138,9 @@ from sqlalchemy import inspect, text
 if "matched_keywords" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN matched_keywords TEXT NOT NULL DEFAULT '[]'"))
+if "wecom_sent_at" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN wecom_sent_at DATETIME"))
 if "wecom_sent" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN wecom_sent BOOLEAN"))
@@ -155,7 +159,7 @@ def auth(authorization: Optional[str] = Header(None)):
 
 def serialize(v):
     import json
-    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","wecom_sent","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason","matched_keywords")}}
+    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","wecom_sent","wecom_sent_at","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason","matched_keywords")}}
 
 
 
@@ -253,18 +257,19 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
                     (Vulnerability.wecom_sent.is_(True), 2),
                     (Vulnerability.wecom_sent.is_(False), 1),
                     else_=0
-                )).over(partition_by=group_key).label("group_send_state")
+                )).over(partition_by=group_key).label("group_send_state"),
+                func.max(Vulnerability.wecom_sent_at).over(partition_by=group_key).label("group_sent_at")
             )
             # Apply search filters to the grouping result, keeping all matching sources.
             ranked=ranked.where(*stmt._where_criteria).subquery()
-            parents=select(Vulnerability,ranked.c.group_count,ranked.c.group_send_state).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
+            parents=select(Vulnerability,ranked.c.group_count,ranked.c.group_send_state,ranked.c.group_sent_at).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
             total=db.scalar(select(func.count()).select_from(parents.subquery()))
             records=db.execute(parents.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
             # Merge recorded matches across visible source records for each CVE.
             # Never recompute from today's keyword configuration for old rows.
             import json
             group_matches={}
-            cves=list({v.cve.upper() for v,_,_ in records if v.cve})
+            cves=list({v.cve.upper() for v,_,_,_ in records if v.cve})
             for offset in range(0,len(cves),300):
                 chunk=cves[offset:offset+300]
                 siblings=db.execute(
@@ -278,12 +283,13 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
                         if keyword.casefold() not in {value.casefold() for value in matched}:
                             matched.append(keyword)
             output=[]
-            for v,count,send_state in records:
+            for v,count,send_state,sent_at in records:
                 item=serialize(v)
                 if v.cve:
                     item["matched_keywords"]=group_matches.get(v.cve.upper(),item["matched_keywords"])
                 item["group_count"]=count
                 item["wecom_sent"]=True if send_state==2 else False if send_state==1 else None
+                item["wecom_sent_at"]=sent_at if send_state==2 else None
                 output.append(item)
             return {"code":0,"data":{"list":output,"total":total,"page":page,"size":size},"message":"success"}
         total=db.scalar(select(func.count()).select_from(stmt.subquery()))
