@@ -56,7 +56,7 @@ router=APIRouter(prefix="/api/v1/reviews",dependencies=[Depends(auth)])
 @router.get("")
 def pending_reviews():
     with Session(engine) as db:
-        records=db.scalars(select(Review).where(Review.status=="pending").order_by(Review.id.desc())).all()
+        records=db.scalars(select(Review).where(Review.status.in_(("pending","queued"))).order_by(Review.id.desc())).all()
         return {"code":0,"data":[{**serialize(db.get(Vulnerability,r.vulnerability_id)),"matched_keyword":r.matched_keyword,"review_status":r.status} for r in records],"message":"success"}
 
 class PendingDeleteInput(BaseModel):
@@ -183,39 +183,45 @@ def edit_pending(vulnerability_id: int, body: ReviewEditInput):
             "message":"saved"}
 
 
+def confirm_queued_delivery(items):
+    """Complete only reviews whose exact vulnerability records were delivered."""
+    keys={str(item.get("key") or "") for item in items if item.get("key")}
+    if not keys:
+        return 0
+    with Session(engine) as db:
+        rows=db.scalars(
+            select(Review).join(Vulnerability,Review.vulnerability_id==Vulnerability.id)
+            .where(Review.status=="queued",Vulnerability.key.in_(keys))
+        ).all()
+        for review in rows:
+            review.status="approved"
+            review.reviewed_at=datetime.now(timezone.utc)
+            vuln=db.get(Vulnerability,review.vulnerability_id)
+            if vuln:
+                vuln.pushed=True
+        db.commit()
+        return len(rows)
+
+
 @router.post("/{vulnerability_id}/approve")
 def approve(vulnerability_id:int):
+    """Confirm approval only; deliver on the next regular digest flush."""
     with Session(engine) as db:
         review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
-        if not review or review.status!="pending":raise HTTPException(409,"Not pending approval")
+        if not review or review.status!="pending":
+            raise HTTPException(409,"该记录不是待审核状态")
         vuln=db.get(Vulnerability,vulnerability_id)
-        if not vuln:raise HTTPException(404,"Vulnerability not found")
+        if not vuln:
+            raise HTTPException(404,"Vulnerability not found")
         cve=_validate_review_fields(vuln.cve,vuln.severity,complete=True)
         _check_cve_unique(db,cve,vulnerability_id)
-        item=serialize(vuln)
-        # Mark processing first: prevents repeat approval and automatic requeue.
-        review.status="sending"
-        db.commit()
-    try:
-        results=send_vulnerability(item,ai_enabled=False)
-        if not results or not all(results.values()):
-            raise RuntimeError("No notification channel succeeded")
-    except Exception as exc:
-        with Session(engine) as db:
-            review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
-            review.status="pending"
-            db.commit()
-        log_run(item,"review","推送失败",str(exc))
-        raise HTTPException(502,"Notification failed: "+str(exc)[:150])
-    with Session(engine) as db:
-        review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
-        review.status="approved"
+        review.status="queued"
         review.reviewed_at=datetime.now(timezone.utc)
-        vuln=db.get(Vulnerability,vulnerability_id)
-        vuln.pushed=True
         db.commit()
-    log_run(item,"review","推送成功","人工审核通过")
-    return {"code":0,"message":"approved and sent"}
+        item=serialize(vuln)
+    log_run(item,"review","等待合并推送","人工审核已确认，等待下一次正常采集合并推送")
+    return {"code":0,"message":"queued for next collection","data":{"status":"queued"}}
+
 
 @router.post("/{vulnerability_id}/reject")
 def reject(vulnerability_id:int):
