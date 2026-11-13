@@ -8,7 +8,40 @@ from .push_config import current
 from .core import log_run
 
 _active_digest=ContextVar("active_notification_digest",default=None)
-MAX_MARKDOWN=3800
+MAX_MARKDOWN=3500  # Includes the digest header; safely below sender's 3720-byte limit.
+# Reserve room for the "第 N/M 部分" header inserted after grouping.
+DIGEST_PART_LABEL_BYTES=120
+
+def _bytes(value):
+    return len(value.encode("utf-8"))
+
+def build_digest_chunks(header, entries, lines):
+    """Pack complete vulnerability entries, never split between their fields.
+
+    Each resulting message must fit in one call of send_wecom_markdown.
+    Exception: an individual entry larger than the budget is emitted alone,
+    and the shared sender handles that inherently oversized entry.
+    """
+    chunks=[]
+    part=header
+    part_entries=[]
+    budget=MAX_MARKDOWN-DIGEST_PART_LABEL_BYTES
+    for (item,_),line in zip(entries,lines):
+        if part_entries and _bytes(part+line)>budget:
+            chunks.append((part,list(part_entries)))
+            part=header
+            part_entries=[]
+        part+=line
+        part_entries.append(item)
+        if _bytes(part)>budget:
+            # This one entry cannot fit; keep it separate from other entries.
+            chunks.append((part,list(part_entries)))
+            part=header
+            part_entries=[]
+    if part_entries:
+        chunks.append((part,part_entries))
+    return chunks
+
 
 def begin_digest():
     return _active_digest.set({"vulnerability":[],"article":[],"nvd_deadline":time.monotonic()+180})
@@ -61,25 +94,18 @@ def flush_digest():
             if link:line+="> [查看原文]("+str(link)+")\n"
             lines.append(line)
 
-        chunks=[]
-        chunk=header
-        chunk_entries=[]
-        for (item,_),line in zip(entries,lines):
-            if chunk_entries and len((chunk+line).encode("utf-8"))>MAX_MARKDOWN:
-                chunks.append((chunk,list(chunk_entries)))
-                chunk=header
-                chunk_entries=[]
-            chunk+=line
-            chunk_entries.append(item)
-        if chunk_entries:
-            chunks.append((chunk,chunk_entries))
+        # One UTF-8 budget at the digest layer avoids unintended double-splits.
+        chunks=build_digest_chunks(header,entries,lines)
 
         for idx,(part,part_entries) in enumerate(chunks,1):
             payload=part if len(chunks)==1 else part.replace(
                 header,header+f"> 第 {idx}/{len(chunks)} 部分\n",1
             )
             try:
-                # This helper enforces the 4096-byte limit on every HTTP request.
+                # Normal groups MUST fit exactly one WeCom message.
+                # Standalone oversized entries may require multiple messages.
+                if len(part_entries)>1 and _bytes(payload)>3720:
+                    raise RuntimeError("分组消息超过单条安全上限，请检查分组逻辑")
                 if not send_wecom_markdown(payload,url=webhook):
                     raise RuntimeError("机器人未确认发送成功")
                 from .notifications import mark_wecom_delivered
