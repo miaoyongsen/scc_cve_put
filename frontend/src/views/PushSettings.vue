@@ -52,10 +52,15 @@ const defaultArticleTemplate="## WatchVuln 安全文章\n> **标题**：{title}\
 const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',error_message_template:defaultErrorTemplate,severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
 function resetErrorTemplate(){form.value.error_message_template=defaultErrorTemplate}
 const errorPreview=computed(()=>{
-  const sample={task:'统一采集（RSS + Python）（部分失败）',time:'2026-11-13 15:59:11 +0800',
-    details:'> • 奇安信cve采集：408，爬虫执行超过35秒\\n> • 来源：奇安信cve采集；HTTP：未知'}
-  let result=(form.value.error_message_template||'').replace(/\\\\n/g,'\\n')
-  for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value)
+  const sample={
+    task:'统一采集（RSS + Python）（部分失败）',
+    time:'2026-11-13 15:59:11 +0800',
+    details:['> • 奇安信cve采集：408，爬虫执行超过35秒','> • 来源：奇安信cve采集；HTTP：未知'].join('\n')
+  }
+  let result=(form.value.error_message_template||'').split('\\n').join('\n')
+  for(const [key,value] of Object.entries(sample)){
+    result=result.split('{'+key+'}').join(value)
+  }
   return result
 })
 function resetArticleTemplate(){form.value.article_template=defaultArticleTemplate}
