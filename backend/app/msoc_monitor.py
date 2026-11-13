@@ -529,7 +529,10 @@ def _validate_webhook(value, label):
 
 @router.get("/config")
 def get_config():
-    return {"code": 0, "data": _config_data(_config())}
+    row=_config()
+    return {"code": 0, "data": {**_config_data(row),
+        "wecom_webhook": row.wecom_webhook,
+        "error_webhook": row.error_webhook}}
 
 
 @router.put("/config")
