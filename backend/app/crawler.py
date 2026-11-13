@@ -194,12 +194,14 @@ def _collect_script(script_id:int):
             filtered+=1
             continue
         key=hashlib.sha256(("crawler:"+str(script_id)+":"+item["url"]).encode()).hexdigest()
+        from .eligibility import matching_keywords
         normalized={"key":key,"title":item["title"],"description":item.get("description") or "",
                     "severity":item["severity"],"cve":item["cve"],
                     "disclosure":item.get("disclosure") or "",
                     "solutions":item.get("solutions") or "",
                     "references":[item["url"]],"tags":item.get("tags") or [],
-                    "from":source,"reason":[],"content_type":content_type}
+                    "from":source,"reason":[],"content_type":content_type,
+                    "matched_keywords":matching_keywords(item) if content_type=="vulnerability" else []}
 
         # Security articles must have a real publication timestamp within the
         # trailing 24 hours. Do not substitute collection time for publication time.
