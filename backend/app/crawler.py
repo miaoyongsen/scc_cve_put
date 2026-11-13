@@ -169,8 +169,8 @@ def _collect_script(script_id:int):
     from .legacy_notify import send_vulnerability
     run_id=_active_run.get()
     inserted=0
-    primary=0
-    secondary=0
+    direct=0
+    review_count=0
     filtered=0
     notified=0
     notification_errors=[]
@@ -249,7 +249,7 @@ def _collect_script(script_id:int):
                 old.severity=item["severity"]
                 old.payload=json.dumps(item,ensure_ascii=False)
             new_cve=bool(item["cve"]) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
-            pending_upgrade=(content_type=="vulnerability" and tier=="primary" and item["severity"] in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
+            pending_upgrade=(content_type=="vulnerability" and tier=="direct" and item["severity"] in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
             notify=upsert(db,normalized,content_type=="vulnerability")
             if pending_upgrade:
                 notify=True
@@ -262,15 +262,15 @@ def _collect_script(script_id:int):
             review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
             if review and content_type=="vulnerability" and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
                 notify=False
-            elif tier=="secondary" and content_type=="vulnerability":
+            elif tier=="review" and content_type=="vulnerability":
                 db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or ""))
                 db.commit()
                 notify=False
-        if tier=="primary":
-            primary+=1
-        elif tier=="secondary":
-            secondary+=1
-        if tier=="secondary":pending.append({"title":item["title"],"cve":item["cve"]})
+        if tier=="direct":
+            direct+=1
+        elif tier=="review":
+            review_count+=1
+        if tier=="review":pending.append({"title":item["title"],"cve":item["cve"]})
 
         if content_type in ("article","article_review"):
             if article_duplicate:
@@ -307,7 +307,7 @@ def _collect_script(script_id:int):
             events.append(event)
             continue
 
-        log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),keyword or "",run_id=run_id)
+        log_run(normalized,tier,"待推送" if notify else ("待审核" if tier=="review" else "未推送"),keyword or "",run_id=run_id)
         if notify:
             try:
                 outcome=send_vulnerability(normalized,ai_enabled=new_cve)
@@ -317,7 +317,7 @@ def _collect_script(script_id:int):
                     notified+=1
                     log_run(normalized,tier,"推送成功",run_id=run_id)
                     pushed.append({"title":item["title"],"cve":item["cve"]})
-                    if tier=="primary" and item["severity"] in ("高危","严重"):
+                    if tier=="direct" and item["severity"] in ("高危","严重"):
                         resolve_unknown_reviews(item.get("cve"))
                 else:
                     log_run(normalized,tier,"推送未成功","无有效通知渠道或被推送规则过滤",run_id=run_id)
@@ -325,7 +325,7 @@ def _collect_script(script_id:int):
                 log_run(normalized,tier,"推送失败",str(exc),run_id=run_id)
                 notification_errors.append(str(exc)[:160])
     return {"code":0,"data":{"inserted":inserted,"count":result["count"],
-            "primary":primary,"secondary":secondary,"filtered":filtered,"content_type":content_type,
+            "direct":direct,"review_count":review_count,"filtered":filtered,"content_type":content_type,
             "notifications":notified,"notification_errors":notification_errors,
             "duplicates":duplicates,"pushed":pushed,"pending":pending,"events":events,
             "article_time_window_hours":article_window_hours if content_type in ("article","article_review") else None,
