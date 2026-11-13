@@ -17,6 +17,25 @@ def keyword_matches(title, word):
         return re.search(r"(?<![A-Za-z0-9_.])php(?![A-Za-z0-9_])", title, re.IGNORECASE) is not None
     return word in title
 
+def matching_keywords(item, keywords=None):
+    """Return all configured keywords matching the title, in configured order.
+
+    Uses the exact same matching semantics as evaluate(), including the
+    wildcard boundary and PHP-extension exceptions. Avoid duplicate tags.
+    """
+    if keywords is None:
+        keywords=whitelist_keywords()
+    title=(item.get("title") or "").casefold()
+    result=[]
+    seen=set()
+    for raw in keywords:
+        word=str(raw).strip()
+        if word and word.casefold() not in seen and keyword_matches(title,word.casefold()):
+            result.append(word)
+            seen.add(word.casefold())
+    return result
+
+
 def evaluate(item, config=None):
     """Return (action, matched_keyword, rejection_reason): direct/review/filtered."""
     if config is None:
