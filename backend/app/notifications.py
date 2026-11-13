@@ -79,8 +79,12 @@ def send_wecom_markdown(text: str, url=None):
     return True
 
 def send_wecom_text(text: str, url=None):
-    """Independent plain-text transport for operational alerts."""
-    return _send_wecom({"msgtype":"text","text":{"content":text}},url)
+    """Split operational text alerts within the 2048-byte WeCom text limit."""
+    parts = split_wecom_markdown(str(text), 1850)
+    for part in parts:
+        if not _send_wecom({"msgtype":"text","text":{"content":part}},url):
+            return False
+    return True
 
 def _send_wecom(payload, url=None):
     global _last_send_started
