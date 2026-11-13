@@ -244,14 +244,19 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
             ranked=select(
                 Vulnerability.id.label("vid"),
                 func.row_number().over(partition_by=group_key,order_by=(Vulnerability.first_seen.asc(),Vulnerability.id.asc())).label("rn"),
-                func.count().over(partition_by=group_key).label("group_count")
+                func.count().over(partition_by=group_key).label("group_count"),
+                func.max(case(
+                    (Vulnerability.wecom_sent.is_(True), 2),
+                    (Vulnerability.wecom_sent.is_(False), 1),
+                    else_=0
+                )).over(partition_by=group_key).label("group_send_state")
             )
             # Apply search filters to the grouping result, keeping all matching sources.
             ranked=ranked.where(*stmt._where_criteria).subquery()
-            parents=select(Vulnerability,ranked.c.group_count).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
+            parents=select(Vulnerability,ranked.c.group_count,ranked.c.group_send_state).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
             total=db.scalar(select(func.count()).select_from(parents.subquery()))
             records=db.execute(parents.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
-            return {"code":0,"data":{"list":[{**serialize(v),"group_count":count} for v,count in records],"total":total,"page":page,"size":size},"message":"success"}
+            return {"code":0,"data":{"list":[{**serialize(v),"group_count":count,"wecom_sent":True if send_state==2 else False if send_state==1 else None} for v,count,send_state in records],"total":total,"page":page,"size":size},"message":"success"}
         total=db.scalar(select(func.count()).select_from(stmt.subquery()))
         rows=db.scalars(stmt.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
         return {"code":0,"data":{"list":[serialize(x) for x in rows],"total":total,"page":page,"size":size},"message":"success"}
