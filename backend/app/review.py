@@ -2,9 +2,10 @@
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import Integer, String, DateTime, ForeignKey, select
+from pydantic import BaseModel, Field
+from sqlalchemy import Integer, String, DateTime, ForeignKey, select, delete, or_
 from sqlalchemy.orm import Mapped, mapped_column, Session
-from .core import Base, engine, auth, Vulnerability, serialize, log_run
+from .core import Base, engine, auth, Vulnerability, RunRecord, serialize, log_run
 from .legacy_notify import send_vulnerability
 
 class Review(Base):
@@ -52,6 +53,81 @@ def pending_reviews():
     with Session(engine) as db:
         records=db.scalars(select(Review).where(Review.status=="pending").order_by(Review.id.desc())).all()
         return {"code":0,"data":[{**serialize(db.get(Vulnerability,r.vulnerability_id)),"matched_keyword":r.matched_keyword,"review_status":r.status} for r in records],"message":"success"}
+
+class PendingDeleteInput(BaseModel):
+    ids: list[int] = Field(..., min_items=1, max_items=500)
+
+
+def _delete_pending_records(ids: list[int]):
+    """Permanently delete selected pending items and every source of each selected CVE.
+
+    The operation is transactional. An item without CVE deletes only its own
+    vulnerability. Collection-run summary history is intentionally preserved.
+    """
+    from .crawler import CrawlerFinding
+    from .ai_config import AIAnalysis
+    import hashlib
+    unique_ids=set(ids)
+    with Session(engine) as db:
+        selected=db.scalars(
+            select(Vulnerability).join(Review,Review.vulnerability_id==Vulnerability.id)
+            .where(Vulnerability.id.in_(unique_ids),Review.status=="pending")
+        ).all()
+        if len(selected)!=len(unique_ids):
+            raise HTTPException(409,"所选记录含已处理或不存在的待审核项目，请刷新后重试")
+        cves={row.cve.strip().upper() for row in selected if row.cve and row.cve.strip()}
+        conditions=[Vulnerability.id.in_(unique_ids)]
+        if cves:
+            conditions.append(Vulnerability.cve.in_(cves))
+        affected=db.scalars(select(Vulnerability).where(or_(*conditions))).all()
+        affected_ids=[row.id for row in affected]
+        affected_keys={row.key for row in affected}
+        affected_urls=set()
+        for row in affected:
+            try:
+                import json
+                affected_urls.update(str(u) for u in json.loads(row.references or "[]") if u)
+            except (TypeError,ValueError):
+                pass
+
+        # Delete raw crawler findings by both CVE and exact source-key matching;
+        # without a CVE, do not broaden the deletion to unrelated records.
+        raw_ids=[]
+        for finding in db.scalars(select(CrawlerFinding)).all():
+            fingerprint=hashlib.sha256(
+                ("crawler:"+str(finding.script_id)+":"+finding.url).encode()
+            ).hexdigest()
+            if (finding.cve and finding.cve.strip().upper() in cves) or fingerprint in affected_keys:
+                raw_ids.append(finding.id)
+        if raw_ids:
+            db.execute(delete(CrawlerFinding).where(CrawlerFinding.id.in_(raw_ids)))
+
+        # Clear associated AI results and review records before the vulnerable rows.
+        db.execute(delete(AIAnalysis).where(AIAnalysis.vuln_key.in_(affected_keys)))
+        deleted_reviews=db.execute(delete(Review).where(Review.vulnerability_id.in_(affected_ids))).rowcount
+        # Keep run/collection audit history unchanged; these events describe past work.
+        deleted_vulnerabilities=db.execute(
+            delete(Vulnerability).where(Vulnerability.id.in_(affected_ids))
+        ).rowcount
+        db.commit()
+        return {
+            "selected":len(selected),
+            "deleted_reviews":deleted_reviews,
+            "deleted_vulnerabilities":deleted_vulnerabilities,
+            "deleted_crawler_findings":len(raw_ids),
+            "cves":sorted(cves),
+        }
+
+
+@router.post("/bulk-delete")
+def bulk_delete_pending(body: PendingDeleteInput):
+    return {"code":0,"data":_delete_pending_records(body.ids),"message":"deleted"}
+
+
+@router.delete("/{vulnerability_id}")
+def delete_pending(vulnerability_id:int):
+    return {"code":0,"data":_delete_pending_records([vulnerability_id]),"message":"deleted"}
+
 
 @router.post("/{vulnerability_id}/approve")
 def approve(vulnerability_id:int):
