@@ -23,7 +23,7 @@ def evaluate(item, config=None):
         config={
             "severities":set(allowed_severities()),
             "hours":lookback_hours(),
-            "primary":[x.casefold() for x in whitelist_keywords()],
+            "keywords":[x.casefold() for x in whitelist_keywords()],
         }
     if (item.get("severity") or "未知") not in config["severities"]:
         return None,None,"severity"
@@ -41,13 +41,13 @@ def evaluate(item, config=None):
         if published.astimezone(timezone.utc)<datetime.now(timezone.utc)-timedelta(hours=config["hours"]):
             return None,None,"date"
     title=(item.get("title") or "").casefold()
-    direct=next((word for word in config["primary"] if keyword_matches(title,word)),None)
+    direct=next((word for word in config["keywords"] if keyword_matches(title,word)),None)
     severity=item.get("severity") or "未知"
     if severity == "未知":
         if direct:
             return "review","等级未知",None
         return None,None,"keyword"
     if direct:return "direct",direct,None
-    if config["primary"]:
+    if config["keywords"]:
         return None,None,"keyword"
     return "direct",None,None
