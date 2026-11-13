@@ -52,6 +52,7 @@ class Vulnerability(Base):
     github_search: Mapped[str] = mapped_column(Text, default="[]")
     source: Mapped[str] = mapped_column("from", String(100), default="")
     reason: Mapped[str] = mapped_column(Text, default="[]")
+    matched_keywords: Mapped[str] = mapped_column(Text, default="[]")
     pushed: Mapped[bool] = mapped_column(Boolean, default=False)
     # True only after the WeCom webhook confirms delivery; NULL for legacy rows.
     wecom_sent: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=False)
@@ -133,6 +134,9 @@ def log_run(item,tier,status,detail="",run_id=None):
 
 Base.metadata.create_all(engine)
 from sqlalchemy import inspect, text
+if "matched_keywords" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN matched_keywords TEXT NOT NULL DEFAULT '[]'"))
 if "wecom_sent" not in {c["name"] for c in inspect(engine).get_columns("vulnerabilities")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE vulnerabilities ADD COLUMN wecom_sent BOOLEAN"))
@@ -151,7 +155,7 @@ def auth(authorization: Optional[str] = Header(None)):
 
 def serialize(v):
     import json
-    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","wecom_sent","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason")}}
+    return {**{k: getattr(v, k) for k in ("id","key","title","description","severity","cve","disclosure","solutions","pushed","wecom_sent","content_type","first_seen","last_seen")}, "from":v.source, **{k:json.loads(getattr(v,k) or "[]") for k in ("references","tags","github_search","reason","matched_keywords")}}
 
 
 
