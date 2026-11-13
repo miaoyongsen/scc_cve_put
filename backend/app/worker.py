@@ -38,7 +38,9 @@ def upsert(db: Session, item: dict, enable_cve_filter: bool):
     existing = db.scalar(select(Vulnerability).where(Vulnerability.key == key))
     cve = item.get("cve") or ""
     tags = item.get("tags") or []
-    matched_keywords = item.get("matched_keywords") or []
+    matched_keywords = item.get("matched_keywords")
+    if matched_keywords is None:
+        matched_keywords = []
     severity = item.get("severity") or ""
     content_type = "article" if item.get("content_type") in ("article", "article_review") else "vulnerability"
     if existing is None:
@@ -71,7 +73,7 @@ def upsert(db: Session, item: dict, enable_cve_filter: bool):
     for attr, val in {"title":item.get("title") or "","description":item.get("description") or "",
         "severity":severity,"content_type":content_type,"cve":cve,"disclosure":item.get("disclosure") or "",
         "solutions":item.get("solutions") or "","references":json.dumps(item.get("references") or [],ensure_ascii=False),
-        "tags":json.dumps(tags,ensure_ascii=False),"matched_keywords":json.dumps(matched_keywords,ensure_ascii=False),"github_search":json.dumps(item.get("github_search") or [],ensure_ascii=False),
+        "tags":json.dumps(tags,ensure_ascii=False),"matched_keywords":json.dumps(item["matched_keywords"],ensure_ascii=False) if "matched_keywords" in item else (existing.matched_keywords or "[]"),"github_search":json.dumps(item.get("github_search") or [],ensure_ascii=False),
         "source":item.get("from") or "","reason":json.dumps(item.get("reason") or [],ensure_ascii=False),
         "last_seen":datetime.now(timezone.utc)}.items():
         setattr(existing,attr,val)
