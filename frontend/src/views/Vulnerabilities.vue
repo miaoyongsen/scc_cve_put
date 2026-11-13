@@ -2,7 +2,7 @@
 <script setup>
 import{h,ref,reactive,computed,onMounted}from'vue'
 import{useRouter}from'vue-router'
-import{useMessage,NButton,NDataTable,NInput,NSelect,NSpace,NText,NTag,NModal,NDescriptions,NDescriptionsItem}from'naive-ui'
+import{useMessage,NButton,NDataTable,NInput,NSelect,NSpace,NText,NTag,NModal,NDescriptions,NDescriptionsItem,NAlert}from'naive-ui'
 import{list,detail,refresh}from'../api'
 import axios from 'axios'
 const router=useRouter(),msg=useMessage(),rows=ref([]),total=ref(0),loading=ref(false),refreshing=ref(false),page=ref(1),q=ref(''),severity=ref(["严重","高危"]),source=ref(''),show=ref(false),selected=ref(null)
@@ -22,8 +22,8 @@ async function deleteReviews(ids){
   if(!ids.length||deletingReviews.value)return
   const selectedRows=pending.value.filter(row=>ids.includes(row.id))
   const cves=[...new Set(selectedRows.map(row=>row.cve).filter(Boolean))]
-  const scope=cves.length?'这些 CVE 的全部来源情报也会删除：\\n'+cves.slice(0,15).join('、')+(cves.length>15?' 等 '+cves.length+' 个':''):'选中项目没有 CVE，仅删除对应情报'
-  if(!confirm('确定永久删除 '+ids.length+' 条待审核项目？\\n'+scope+'\\n同时删除关联审核、原始爬虫和 AI 研判数据；历史运行记录保留。此操作不可撤销。'))return
+  const scope=cves.length?'这些 CVE 的全部来源情报也会删除：\n'+cves.slice(0,15).join('、')+(cves.length>15?' 等 '+cves.length+' 个':''):'选中项目没有 CVE，仅删除对应情报'
+  if(!confirm('确定永久删除 '+ids.length+' 条待审核项目？\n'+scope+'\n同时删除关联审核、原始爬虫和 AI 研判数据；历史运行记录保留。此操作不可撤销。'))return
   deletingReviews.value=true
   try{
     const response=await reviewHttp.post('/bulk-delete',{ids})
