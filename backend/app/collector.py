@@ -197,7 +197,7 @@ def _collect_configured_sources(progress=None):
         sources=[(s.id,s.name,s.adapter,s.notes,s.ai_enabled) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
     for source_id,name,adapter,notes,ai_enabled in sources:
         summary["sources"]+=1
-        detail={"name":name,"adapter":adapter,"http_status":None,"duplicates":[],"pushed":[],"pending":[],"items":0,"direct":0,"review_count":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
+        detail={"name":name,"adapter":adapter,"http_status":None,"duplicates":[],"pushed":[],"pending":[],"items":0,"direct":0,"review_count":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0,"filtered_missing_cve":0}
         summary["details"].append(detail)
         if progress:progress(summary)
         if adapter != "rss":
@@ -224,8 +224,10 @@ def _collect_configured_sources(progress=None):
                 tier,matched,rejected=evaluate(item)
                 if rejected:
                     field={"severity":"filtered_severity","date":"filtered_date",
-                           "missing_date":"missing_date","keyword":"filtered_keyword"}[rejected]
+                           "missing_date":"missing_date","keyword":"filtered_keyword","missing_cve":"filtered_missing_cve"}[rejected]
                     detail[field]+=1
+                    if rejected=="missing_cve":
+                        log_run(item,"filtered","跳过","漏洞情报缺少有效 CVE")
                     continue
                 is_direct=tier=="direct"
                 needs_review=tier=="review"
