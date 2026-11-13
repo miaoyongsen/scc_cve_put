@@ -23,7 +23,7 @@ function changeReviewPageSize(size){reviewPagination.pageSize=size;reviewPaginat
 function changeReviewPage(p){reviewPagination.page=p}
 const showReviewEdit=ref(false),editingReview=ref(null),reviewEditCve=ref(''),reviewEditSeverity=ref('未知'),savingReview=ref(false)
 const reviewSeverityOptions=['严重','高危','中危','低危','未知'].map(x=>({label:x,value:x}))
-function readyToSaveApproval(cve,severity){return /^CVE-\\d{4}-\\d{4,}$/i.test((cve||'').trim()) && !!severity && severity!=='未知'}
+function readyToSaveApproval(cve,severity){return /^CVE-\d{4}-\d{4,}$/i.test((cve||'').trim()) && !!severity && severity!=='未知'}
 function editReview(row){editingReview.value=row;reviewEditCve.value=row.cve||'';reviewEditSeverity.value=row.severity||'未知';showReviewEdit.value=true}
 async function saveReviewEdit(){
   if(!editingReview.value||savingReview.value)return
