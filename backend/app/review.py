@@ -1,4 +1,4 @@
-"""Persistent manual approval workflow for second-tier CVE intelligence."""
+"""Manual review only for unknown-severity CVE intelligence."""
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -149,7 +149,7 @@ def approve(vulnerability_id:int):
             review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
             review.status="pending"
             db.commit()
-        log_run(item,"secondary","推送失败",str(exc))
+        log_run(item,"review","推送失败",str(exc))
         raise HTTPException(502,"Notification failed: "+str(exc)[:150])
     with Session(engine) as db:
         review=db.scalar(select(Review).where(Review.vulnerability_id==vulnerability_id))
@@ -158,7 +158,7 @@ def approve(vulnerability_id:int):
         vuln=db.get(Vulnerability,vulnerability_id)
         vuln.pushed=True
         db.commit()
-    log_run(item,"secondary","推送成功","人工审核通过")
+    log_run(item,"review","推送成功","人工审核通过")
     return {"code":0,"message":"approved and sent"}
 
 @router.post("/{vulnerability_id}/reject")
