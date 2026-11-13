@@ -61,7 +61,39 @@ def split_wecom_markdown(content: str, limit: int = _MARKDOWN_PART_BYTES):
             current = ""
     if current:
         parts.append(current)
-    return parts
+    return _balance_short_tail(parts,limit)
+
+
+def _balance_short_tail(parts, limit):
+    """Avoid tiny final continuation messages for inherently oversized items."""
+    if len(parts)<2 or len(parts[-1].encode("utf-8"))>=limit//4:
+        return parts
+    combined=parts[-2]+parts[-1]
+    total=len(combined.encode("utf-8"))
+    # Rebalance the last two messages only when both can safely fit.
+    if total>2*limit:
+        return parts
+    target=total//2
+    used=0
+    cut=0
+    for idx,char in enumerate(combined):
+        used+=len(char.encode("utf-8"))
+        if used>target:
+            break
+        cut=idx+1
+    if cut==0 or cut==len(combined):
+        return parts
+    # Prefer a paragraph/line boundary near the middle, when available.
+    near=combined.rfind("\n",0,cut+1)
+    if near>0:
+        near+=1
+        left_bytes=len(combined[:near].encode("utf-8"))
+        if total//3<=left_bytes<=limit and total-left_bytes<=limit:
+            cut=near
+    before,after=combined[:cut],combined[cut:]
+    if len(before.encode("utf-8"))>limit or len(after.encode("utf-8"))>limit:
+        return parts
+    return parts[:-2]+[before,after]
 
 
 def mark_wecom_delivered(items):
