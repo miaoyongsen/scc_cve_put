@@ -4,7 +4,7 @@ import re
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, String, DateTime, ForeignKey, select, delete, or_, func
+from sqlalchemy import Integer, String, DateTime, ForeignKey, Boolean, select, delete, or_, func, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth, Vulnerability, RunRecord, serialize, log_run
 from .legacy_notify import send_vulnerability
@@ -15,9 +15,13 @@ class Review(Base):
     vulnerability_id: Mapped[int]=mapped_column(Integer,ForeignKey("vulnerabilities.id"),unique=True,index=True)
     status: Mapped[str]=mapped_column(String(20),default="pending",nullable=False)
     matched_keyword: Mapped[str]=mapped_column(String(200),default="")
+    manual_fields: Mapped[bool]=mapped_column(Boolean,default=False,nullable=False)
     reviewed_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
 
 Base.metadata.create_all(engine)
+if "manual_fields" not in {col["name"] for col in inspect(engine).get_columns("vulnerability_reviews")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE vulnerability_reviews ADD COLUMN manual_fields BOOLEAN NOT NULL DEFAULT 0"))
 
 def has_unknown_pending_review(db, cve):
     """Whether this CVE is awaiting review solely because its severity was unknown."""
@@ -172,6 +176,7 @@ def edit_pending(vulnerability_id: int, body: ReviewEditInput):
         _check_cve_unique(db,cve,vulnerability_id)
         vuln.cve=cve
         vuln.severity=body.severity
+        review.manual_fields=True
         db.commit()
         return {"code":0,"data":{"id":vuln.id,"cve":vuln.cve,
             "severity":vuln.severity,"ready":bool(cve and vuln.severity!="未知")},
