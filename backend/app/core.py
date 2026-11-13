@@ -260,7 +260,32 @@ def list_vulnerabilities(page:int=1,size:int=20,severity:str="",source:str="",q:
             parents=select(Vulnerability,ranked.c.group_count,ranked.c.group_send_state).join(ranked,Vulnerability.id==ranked.c.vid).where(ranked.c.rn==1)
             total=db.scalar(select(func.count()).select_from(parents.subquery()))
             records=db.execute(parents.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
-            return {"code":0,"data":{"list":[{**serialize(v),"group_count":count,"wecom_sent":True if send_state==2 else False if send_state==1 else None} for v,count,send_state in records],"total":total,"page":page,"size":size},"message":"success"}
+            # Merge recorded matches across visible source records for each CVE.
+            # Never recompute from today's keyword configuration for old rows.
+            import json
+            group_matches={}
+            cves=list({v.cve.upper() for v,_,_ in records if v.cve})
+            for offset in range(0,len(cves),300):
+                chunk=cves[offset:offset+300]
+                siblings=db.execute(
+                    select(Vulnerability.cve,Vulnerability.matched_keywords)
+                    .where(func.upper(Vulnerability.cve).in_(chunk),*stmt._where_criteria)
+                    .order_by(Vulnerability.first_seen.asc(),Vulnerability.id.asc())
+                ).all()
+                for cve_value,keywords_json in siblings:
+                    matched=group_matches.setdefault(cve_value.upper(),[])
+                    for keyword in json.loads(keywords_json or "[]"):
+                        if keyword.casefold() not in {value.casefold() for value in matched}:
+                            matched.append(keyword)
+            output=[]
+            for v,count,send_state in records:
+                item=serialize(v)
+                if v.cve:
+                    item["matched_keywords"]=group_matches.get(v.cve.upper(),item["matched_keywords"])
+                item["group_count"]=count
+                item["wecom_sent"]=True if send_state==2 else False if send_state==1 else None
+                output.append(item)
+            return {"code":0,"data":{"list":output,"total":total,"page":page,"size":size},"message":"success"}
         total=db.scalar(select(func.count()).select_from(stmt.subquery()))
         rows=db.scalars(stmt.order_by(ordering,Vulnerability.id.desc()).offset((page-1)*size).limit(size)).all()
         return {"code":0,"data":{"list":[serialize(x) for x in rows],"total":total,"page":page,"size":size},"message":"success"}
