@@ -192,12 +192,12 @@ def _collect_configured_sources(progress=None):
     from .review import Review, has_unknown_pending_review, resolve_unknown_reviews
     from .core import Vulnerability
     from sqlalchemy import select
-    summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
+    summary={"sources":0,"items":0,"eligible":0,"notifications":0,"errors":[],"direct":0,"review_count":0,"new":0,"details":[]}
     with Session(engine) as db:
         sources=[(s.id,s.name,s.adapter,s.notes,s.ai_enabled) for s in db.scalars(select(IntelSource).where(IntelSource.enabled.is_(True))).all()]
     for source_id,name,adapter,notes,ai_enabled in sources:
         summary["sources"]+=1
-        detail={"name":name,"adapter":adapter,"http_status":None,"duplicates":[],"pushed":[],"pending":[],"items":0,"primary":0,"secondary":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
+        detail={"name":name,"adapter":adapter,"http_status":None,"duplicates":[],"pushed":[],"pending":[],"items":0,"direct":0,"review_count":0,"new":0,"status":"running","filtered_severity":0,"filtered_date":0,"filtered_keyword":0,"filtered_rule":0,"missing_date":0}
         summary["details"].append(detail)
         if progress:progress(summary)
         if adapter != "rss":
@@ -227,22 +227,22 @@ def _collect_configured_sources(progress=None):
                            "missing_date":"missing_date","keyword":"filtered_keyword"}[rejected]
                     detail[field]+=1
                     continue
-                direct=matched if tier=="primary" else None
-                manual=matched if tier=="secondary" else None
+                is_direct=tier=="direct"
+                needs_review=tier=="review"
                 if not matches(item, True):
                     detail["filtered_rule"]+=1
                     continue
                 summary["eligible"]+=1
-                if direct:
-                    summary["primary"]+=1
-                    detail["primary"]+=1
-                elif manual:
-                    summary["secondary"]+=1
-                    detail["secondary"]+=1
+                if is_direct:
+                    summary["direct"]+=1
+                    detail["direct"]+=1
+                elif needs_review:
+                    summary["review_count"]+=1
+                    detail["review_count"]+=1
                 with Session(engine) as db:
                     existing=db.scalar(select(Vulnerability.id).where(Vulnerability.key==item["key"]))
                     new_cve=bool(item.get("cve")) and not bool(db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"])))
-                    pending_upgrade = (tier=="primary" and item.get("severity") in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
+                    pending_upgrade = (tier=="direct" and item.get("severity") in ("高危","严重") and has_unknown_pending_review(db,item.get("cve")))
                     notify=upsert(db,item,True)
                     if pending_upgrade:
                         notify=True
@@ -253,14 +253,14 @@ def _collect_configured_sources(progress=None):
                     review=db.scalar(select(Review).where(Review.vulnerability_id==vuln.id))
                     if review and not (pending_upgrade and review.status=="pending" and review.matched_keyword=="等级未知"):
                         notify=False
-                    elif manual and not direct:
-                        db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=manual))
+                    elif needs_review and review is None:
+                        db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword="等级未知"))
                         db.commit()
                         notify=False
                 if existing is not None or (item.get("cve") and not new_cve):
                     detail["duplicates"].append({"title":item.get("title"),"cve":item.get("cve"),"reason":"已有记录或重复 CVE"})
-                if tier=="secondary":detail["pending"].append({"title":item.get("title"),"cve":item.get("cve")})
-                log_run(item,tier,"待推送" if notify else ("待审核" if tier=="secondary" else "未推送"),matched or "")
+                if tier=="review":detail["pending"].append({"title":item.get("title"),"cve":item.get("cve")})
+                log_run(item,tier,"待推送" if notify else ("待审核" if tier=="review" else "未推送"),matched or "")
                 if notify:
                     try:
                         result=send_vulnerability(item,ai_enabled=new_cve)
@@ -270,7 +270,7 @@ def _collect_configured_sources(progress=None):
                             summary["notifications"]+=1
                             log_run(item,tier,"推送成功")
                             detail["pushed"].append({"title":item.get("title"),"cve":item.get("cve")})
-                            if tier=="primary" and item.get("severity") in ("高危","严重"):
+                            if tier=="direct" and item.get("severity") in ("高危","严重"):
                                 resolve_unknown_reviews(item.get("cve"))
                         else:
                             log_run(item,tier,"推送未成功","无有效通知渠道或被推送规则过滤")
@@ -308,7 +308,7 @@ def collect_configured_sources(progress=None, mode="all"):
         run_id=begin_run({"all":"统一采集（RSS + Python）","vulnerability":"漏洞情报定时采集","article":"安全文章定时采集"}.get(mode,"统一采集"))
         token=_active_run.set(run_id)
         summary={"sources":0,"items":0,"eligible":0,"notifications":0,
-                 "errors":[],"primary":0,"secondary":0,"new":0,"details":[]}
+                 "errors":[],"direct":0,"review_count":0,"new":0,"details":[]}
         try:
             if mode!="article":
                 rss=_collect_configured_sources(progress)
@@ -323,7 +323,7 @@ def collect_configured_sources(progress=None, mode="all"):
                      or (mode=="vulnerability" and x.content_type=="vulnerability")]
         for script_id,name in scripts:
             detail={"id":script_id,"name":name,"adapter":"python","http_status":None,
-                    "status":"running","items":0,"new":0,"primary":0,"secondary":0,
+                    "status":"running","items":0,"new":0,"direct":0,"review_count":0,
                     "notifications":0,"duplicates":[],"pushed":[],"pending":[]}
             summary["sources"]+=1
             summary["details"].append(detail)
@@ -336,8 +336,8 @@ def collect_configured_sources(progress=None, mode="all"):
                 detail["status"]="done" if not data.get("notification_errors") else "partial"
                 summary["items"]+=detail["items"]
                 summary["new"]+=detail["new"]
-                summary["primary"]+=data.get("primary",0)
-                summary["secondary"]+=data.get("secondary",0)
+                summary["direct"]+=data.get("direct",0)
+                summary["review_count"]+=data.get("review_count",0)
                 summary["notifications"]+=data.get("notifications",0)
                 summary["eligible"]+=detail["items"]-data.get("filtered",0)
                 if data.get("notification_errors"):
