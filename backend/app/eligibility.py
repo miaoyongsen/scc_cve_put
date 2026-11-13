@@ -18,7 +18,7 @@ def keyword_matches(title, word):
     return word in title
 
 def evaluate(item, config=None):
-    """Return (tier, matched_keyword, rejection_reason). Severity eligibility follows UI settings."""
+    """Return (action, matched_keyword, rejection_reason): direct/review/filtered."""
     if config is None:
         config={
             "severities":set(allowed_severities()),
@@ -45,9 +45,9 @@ def evaluate(item, config=None):
     severity=item.get("severity") or "未知"
     if severity == "未知":
         if direct:
-            return "secondary","等级未知",None
+            return "review","等级未知",None
         return None,None,"keyword"
-    if direct:return "primary",direct,None
+    if direct:return "direct",direct,None
     if config["primary"]:
         return None,None,"keyword"
-    return "primary",None,None
+    return "direct",None,None
