@@ -95,6 +95,13 @@ async def lifespan(app):
     global _thread,_archive_thread
     from .msoc_monitor import start_monitor,stop_monitor
     _stop.clear()
+    # Apply the new 20-run retention once at startup, even before a new collection.
+    try:
+        from .core import prune_collection_run_history
+        removed=prune_collection_run_history()
+        if removed:log.info("Removed %d old collection run histories",removed)
+    except Exception:
+        log.exception("Could not apply collection run retention at startup")
     _archive_thread=threading.Thread(target=archive_loop,name="sqlite-log-archiver",daemon=True)
     _archive_thread.start()
     start_monitor()
