@@ -54,9 +54,9 @@
       </n-alert>
       <n-form-item label="启用正常推送"><n-switch v-model:value="form.wecom_enabled"/></n-form-item>
       <n-form-item label="企业微信机器人 Webhook">
-        <n-input v-model:value="form.wecom_webhook" type="password" show-password-on="click" placeholder="留空则保留已保存的 Webhook"/>
+        <n-input v-model:value="form.wecom_webhook" placeholder="企业微信机器人 Webhook URL"/>
       </n-form-item>
-      <n-text depth="3">{{status.has_wecom_webhook?'已保存 Webhook（不会回显）':'尚未保存 Webhook'}}</n-text>
+      <n-text depth="3">{{status.has_wecom_webhook?'已保存 Webhook，可直接查看':'尚未保存 Webhook'}}</n-text>
       <n-space style="margin-top:12px">
         <n-button type="primary" :loading="saving" @click="save">保存正常推送配置</n-button>
         <n-button :loading="testing" @click="testNormal">发送测试消息</n-button>
@@ -69,9 +69,9 @@
       </n-alert>
       <n-form-item label="启用异常告警"><n-switch v-model:value="form.error_enabled"/></n-form-item>
       <n-form-item label="异常告警 Webhook">
-        <n-input v-model:value="form.error_webhook" type="password" show-password-on="click" placeholder="留空则保留已保存的 Webhook"/>
+        <n-input v-model:value="form.error_webhook" placeholder="异常告警 Webhook URL"/>
       </n-form-item>
-      <n-text depth="3">{{status.has_error_webhook?'已保存异常告警 Webhook（不会回显）':'尚未保存异常告警 Webhook'}}</n-text>
+      <n-text depth="3">{{status.has_error_webhook?'已保存异常告警 Webhook，可直接查看':'尚未保存异常告警 Webhook'}}</n-text>
       <n-space style="margin-top:12px">
         <n-button type="primary" :loading="saving" @click="save">保存异常告警配置</n-button>
         <n-button :loading="testingError" @click="testError">发送异常测试消息</n-button>
@@ -133,7 +133,7 @@ function formatTime(v){return v?String(v).replace('T',' ').replace(/\+.*$/,''):'
 async function load(){
   try{
     const d=(await api.get('/config')).data.data
-    form.value={...form.value,...d,wecom_webhook:'',error_webhook:''}
+    form.value={...form.value,...d}
     await refreshStatus()
   }catch(e){
     msg.error(e.response?.data?.detail||e.message)
