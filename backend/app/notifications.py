@@ -64,6 +64,20 @@ def split_wecom_markdown(content: str, limit: int = _MARKDOWN_PART_BYTES):
     return parts
 
 
+def mark_wecom_delivered(items):
+    """Persist confirmed WeCom deliveries; never infer success from dedup flags."""
+    from sqlalchemy import update
+    from sqlalchemy.orm import Session
+    from .core import engine, Vulnerability
+    keys = {str(item.get("key") or "") for item in items if item.get("key")}
+    if not keys:
+        return
+    with Session(engine) as db:
+        for key in keys:
+            db.execute(update(Vulnerability).where(Vulnerability.key == key).values(wecom_sent=True))
+        db.commit()
+
+
 def send_wecom_markdown(text: str, url=None):
     content = str(text)
     # Reserve 80 bytes for part numbering, including two-digit counts.
