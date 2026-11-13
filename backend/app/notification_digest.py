@@ -59,9 +59,49 @@ def queue_message(item,message):
     digest[kind].append((dict(item),message))
     return True
 
+def add_approved_reviews_to_digest(digest):
+    """Include durable review approvals in the next collection's digest.
+
+    Put manually reviewed entries first, replacing any automatic entry with
+    the same CVE, so the reviewed record's delivery is tracked accurately.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+    from .core import engine, Vulnerability, serialize
+    from .review import Review
+    from .legacy_notify import format_wecom
+
+    with Session(engine) as db:
+        rows=db.execute(
+            select(Vulnerability)
+            .join(Review,Review.vulnerability_id==Vulnerability.id)
+            .where(Review.status=="queued")
+            .order_by(Review.id.asc())
+        ).scalars().all()
+        entries=[]
+        reviewed_cves=set()
+        for vuln in rows:
+            item=serialize(vuln)
+            cve=(item.get("cve") or "").upper()
+            # Normal review save already enforces a unique CVE.
+            if cve in reviewed_cves:
+                continue
+            reviewed_cves.add(cve)
+            entries.append((item,format_wecom(item)))
+    if not entries:
+        return 0
+    remaining=[
+        (item,msg) for item,msg in digest["vulnerability"]
+        if (item.get("cve") or "").upper() not in reviewed_cves
+    ]
+    digest["vulnerability"]=entries+remaining
+    return len(entries)
+
+
 def flush_digest():
     digest=_active_digest.get()
     if digest is None:return {"notifications":0,"errors":[],"pushed":[]}
+    add_approved_reviews_to_digest(digest)
     config=current()
     # Match manual push behavior: DB-configured webhook first, then .env fallback.
     webhook=(config["wecom_webhook"] if config["wecom_enabled"] else "") or os.getenv("WECHAT_WEBHOOK_URL", "").strip()
@@ -110,6 +150,9 @@ def flush_digest():
                     raise RuntimeError("机器人未确认发送成功")
                 from .notifications import mark_wecom_delivered
                 mark_wecom_delivered(part_entries)
+                if kind=="vulnerability":
+                    from .review import confirm_queued_delivery
+                    confirm_queued_delivery(part_entries)
                 result["notifications"]+=len(part_entries)
                 result["pushed"].extend(
                     {"title":item.get("title"),"cve":item.get("cve"),
