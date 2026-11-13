@@ -279,53 +279,83 @@ def enrich_existing_severities():
     return {"code":0,"data":{"checked":len(rows),"updated":updated},"message":"completed"}
 
 class BulkDeleteInput(BaseModel):
-    # The vulnerabilities table supports up to 500 rows per page.
+    # Each selected row represents one CVE group in the grouped UI.
     ids: list[int] = Field(..., min_items=1, max_items=500)
 
 
 @app.post("/api/v1/vulnerabilities/bulk-delete", dependencies=[Depends(auth)])
 def bulk_delete_vulnerabilities(body: BulkDeleteInput):
+    """Remove every source row for selected CVEs, not only the displayed parent row.
+
+    All associated review, AI and crawler finding rows are deleted in one
+    transaction. CVE-less selections only remove their exact selected record.
+    """
+    import hashlib
+    from sqlalchemy import delete
     from .review import Review
     from .crawler import CrawlerFinding
     from .ai_config import AIAnalysis
-    from sqlalchemy import delete
-    import hashlib
 
-    ids=list(dict.fromkeys(body.ids))
+    def chunks(items, n=300):
+        items=list(items)
+        for pos in range(0,len(items),n):
+            yield items[pos:pos+n]
+
+    selected_ids=list(dict.fromkeys(body.ids))
     with Session(engine) as db:
-        rows=db.scalars(select(Vulnerability).where(Vulnerability.id.in_(ids))).all()
-        keys={row.key for row in rows}
-        if not rows:
-            return {"code":0,"data":{"deleted":0,"deleted_reviews":0,
-                                     "deleted_crawler_findings":0,"deleted_ai_results":0},
-                    "message":"deleted"}
+        selected=[]
+        for group in chunks(selected_ids):
+            selected.extend(db.scalars(
+                select(Vulnerability).where(Vulnerability.id.in_(group))
+            ).all())
+        if not selected:
+            return {"code":0,"data":{"deleted":0,"selected":0,
+                "deleted_reviews":0,"deleted_crawler_findings":0,
+                "deleted_ai_results":0},"message":"deleted"}
 
-        # Scan the crawler findings once, instead of once per selected CVE.
-        # The crawler's canonical vulnerability key is SHA256(script_id + URL).
-        crawler_ids=[]
+        # CVE grouping uses a case-insensitive normalized CVE value.
+        # Do not expand blank CVEs; they are independent list entries.
+        cves={row.cve.strip().upper() for row in selected if row.cve and row.cve.strip()}
+        affected={row.id:row for row in selected}
+        for group in chunks(cves):
+            for row in db.scalars(
+                select(Vulnerability).where(func.upper(Vulnerability.cve).in_(group))
+            ).all():
+                affected[row.id]=row
+
+        affected_ids=list(affected)
+        keys={row.key for row in affected.values()}
+        finding_ids=[]
+        # Avoid the old N*all-findings scan. A source crawler finding must
+        # match an affected source key, or the CVE of an affected group.
         for finding in db.scalars(select(CrawlerFinding)).all():
-            source_key=hashlib.sha256(
+            fingerprint=hashlib.sha256(
                 ("crawler:"+str(finding.script_id)+":"+finding.url).encode()
             ).hexdigest()
-            if source_key in keys:
-                crawler_ids.append(finding.id)
+            if fingerprint in keys or (finding.cve and finding.cve.strip().upper() in cves):
+                finding_ids.append(finding.id)
 
-        # Chunk deletes to remain compatible with older SQLite bind limits.
-        def chunks(values, size=400):
-            for offset in range(0,len(values),size):
-                yield values[offset:offset+size]
-
-        reviews_deleted=raw_deleted=ai_deleted=vulnerabilities_deleted=0
-        for group in chunks(crawler_ids):
-            raw_deleted+=db.execute(delete(CrawlerFinding).where(CrawlerFinding.id.in_(group))).rowcount or 0
-        for group in chunks(list(keys)):
-            ai_deleted+=db.execute(delete(AIAnalysis).where(AIAnalysis.vuln_key.in_(group))).rowcount or 0
-        for group in chunks(ids):
-            reviews_deleted+=db.execute(delete(Review).where(Review.vulnerability_id.in_(group))).rowcount or 0
-            vulnerabilities_deleted+=db.execute(delete(Vulnerability).where(Vulnerability.id.in_(group))).rowcount or 0
+        finding_deleted=review_deleted=ai_deleted=vuln_deleted=0
+        for group in chunks(finding_ids):
+            finding_deleted+=db.execute(
+                delete(CrawlerFinding).where(CrawlerFinding.id.in_(group))
+            ).rowcount or 0
+        for group in chunks(keys):
+            ai_deleted+=db.execute(
+                delete(AIAnalysis).where(AIAnalysis.vuln_key.in_(group))
+            ).rowcount or 0
+        for group in chunks(affected_ids):
+            review_deleted+=db.execute(
+                delete(Review).where(Review.vulnerability_id.in_(group))
+            ).rowcount or 0
+            vuln_deleted+=db.execute(
+                delete(Vulnerability).where(Vulnerability.id.in_(group))
+            ).rowcount or 0
         db.commit()
-        return {"code":0,"data":{"deleted":vulnerabilities_deleted,
-            "deleted_reviews":reviews_deleted,"deleted_crawler_findings":raw_deleted,
+        return {"code":0,"data":{"deleted":vuln_deleted,
+            "selected":len(selected),"cve_groups":len(cves),
+            "deleted_reviews":review_deleted,
+            "deleted_crawler_findings":finding_deleted,
             "deleted_ai_results":ai_deleted},"message":"deleted"}
 
 
