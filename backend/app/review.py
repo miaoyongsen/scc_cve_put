@@ -148,6 +148,8 @@ def _validate_review_fields(cve: str, severity: str, complete: bool = False):
         raise HTTPException(422, "CVE 编号格式错误，请使用 CVE-2026-12345 格式")
     if severity not in VALID_SEVERITIES:
         raise HTTPException(422, "危害等级不合法")
+    if not complete and not (code or severity != "未知"):
+        raise HTTPException(422, "请填写有效 CVE 编号或选择非未知危害等级，至少满足一项")
     if complete and (not code or severity == "未知"):
         raise HTTPException(422, "请先补充有效 CVE 编号并选择明确的危害等级")
     return code
@@ -172,7 +174,11 @@ def edit_pending(vulnerability_id: int, body: ReviewEditInput):
         vuln=db.get(Vulnerability,vulnerability_id)
         if not vuln:
             raise HTTPException(404, "漏洞记录不存在")
-        _check_cve_unique(db,cve,vulnerability_id)
+        # Updating severity on an existing CVE must not be blocked by
+        # other source records for that same CVE. Check uniqueness only when
+        # the CVE value is newly added or changed.
+        if cve and cve != (vuln.cve or "").strip().upper():
+            _check_cve_unique(db,cve,vulnerability_id)
         vuln.cve=cve
         vuln.severity=body.severity
         review.manual_fields=True
