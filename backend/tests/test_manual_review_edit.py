@@ -158,3 +158,63 @@ def test_failed_next_digest_keeps_review_queued(isolated_db, monkeypatch):
         assert db.scalar(select(review.Review.status).where(
             review.Review.vulnerability_id==vuln_id
         ))=="queued"
+
+
+def test_save_review_with_only_known_severity(isolated_db):
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="severity-only",title="Apache no CVE",cve="",severity="未知")
+        db.add(vuln)
+        db.flush()
+        vid=vuln.id
+        db.add(review.Review(vulnerability_id=vid,status="pending"))
+        db.commit()
+    updated=review.edit_pending(vid,review.ReviewEditInput(cve="",severity="中危"))
+    assert updated["data"]["severity"]=="中危"
+    assert updated["data"]["ready"] is False
+    with Session(isolated_db) as db:
+        assert db.get(core.Vulnerability,vid).cve==""
+    with pytest.raises(HTTPException) as error:
+        review.approve(vid)
+    assert error.value.status_code==422
+
+
+def test_save_review_with_only_cve(isolated_db):
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="cve-only",title="Apache unknown",cve="",severity="未知")
+        db.add(vuln)
+        db.flush()
+        vid=vuln.id
+        db.add(review.Review(vulnerability_id=vid,status="pending"))
+        db.commit()
+    updated=review.edit_pending(vid,review.ReviewEditInput(cve="cve-2026-54321",severity="未知"))
+    assert updated["data"]["cve"]=="CVE-2026-54321"
+    assert updated["data"]["ready"] is False
+
+
+def test_edit_unchanged_cve_allows_severity_even_if_other_source_has_cve(isolated_db):
+    with Session(isolated_db) as db:
+        first=core.Vulnerability(key="first-src",title="Apache source one",
+                                 cve="CVE-2026-77777",severity="未知")
+        second=core.Vulnerability(key="second-src",title="Apache source two",
+                                  cve="CVE-2026-77777",severity="高危")
+        db.add_all([first,second])
+        db.flush()
+        vid=first.id
+        db.add(review.Review(vulnerability_id=vid,status="pending"))
+        db.commit()
+    result=review.edit_pending(vid,review.ReviewEditInput(cve="CVE-2026-77777",severity="高危"))
+    assert result["data"]["ready"] is True
+
+
+def test_reject_review_edit_without_cve_and_known_severity(isolated_db):
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="no-info",title="Apache missing fields",
+                                cve="",severity="未知")
+        db.add(vuln)
+        db.flush()
+        vid=vuln.id
+        db.add(review.Review(vulnerability_id=vid,status="pending"))
+        db.commit()
+    with pytest.raises(HTTPException) as error:
+        review.edit_pending(vid,review.ReviewEditInput(cve="",severity="未知"))
+    assert error.value.status_code==422
