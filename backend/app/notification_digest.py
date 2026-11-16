@@ -69,7 +69,7 @@ def add_approved_reviews_to_digest(digest):
     from sqlalchemy.orm import Session
     from .core import engine, Vulnerability, serialize
     from .review import Review
-    from .legacy_notify import format_wecom
+    from .legacy_notify import format_wecom_with_ai
 
     with Session(engine) as db:
         rows=db.execute(
@@ -87,7 +87,7 @@ def add_approved_reviews_to_digest(digest):
             if cve in reviewed_cves:
                 continue
             reviewed_cves.add(cve)
-            entries.append((item,format_wecom(item)))
+            entries.append((item,format_wecom_with_ai(item)))
     if not entries:
         return 0
     remaining=[
