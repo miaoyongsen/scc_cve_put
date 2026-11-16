@@ -55,8 +55,8 @@ router=APIRouter(prefix="/api/v1/reviews",dependencies=[Depends(auth)])
 @router.get("")
 def pending_reviews():
     with Session(engine) as db:
-        records=db.scalars(select(Review).where(Review.status.in_(("pending","queued"))).order_by(Review.id.desc())).all()
-        return {"code":0,"data":[{**serialize(db.get(Vulnerability,r.vulnerability_id)),"matched_keyword":r.matched_keyword,"review_status":r.status} for r in records],"message":"success"}
+        records=db.scalars(select(Review).where(Review.status.in_(("pending","queued","rejected"))).order_by(Review.id.desc())).all()
+        return {"code":0,"data":[{**serialize(db.get(Vulnerability,r.vulnerability_id)),"matched_keyword":r.matched_keyword,"review_status":r.status,"reviewed_at":r.reviewed_at} for r in records],"message":"success"}
 
 class PendingDeleteInput(BaseModel):
     ids: list[int] = Field(..., min_items=1, max_items=500)
