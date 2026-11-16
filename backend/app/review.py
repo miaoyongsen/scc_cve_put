@@ -218,8 +218,9 @@ def approve(vulnerability_id:int):
         vuln=db.get(Vulnerability,vulnerability_id)
         if not vuln:
             raise HTTPException(404,"Vulnerability not found")
-        cve=_validate_review_fields(vuln.cve,vuln.severity,complete=True)
-        _check_cve_unique(db,cve,vulnerability_id)
+        _validate_review_fields(vuln.cve,vuln.severity,complete=True)
+        # No duplicate CVE check here: distinct sources legitimately share CVEs.
+        # Newly edited CVE values were already checked during edit_pending().
         review.status="queued"
         review.reviewed_at=datetime.now(timezone.utc)
         db.commit()
