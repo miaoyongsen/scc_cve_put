@@ -1,9 +1,9 @@
 <template>
 <div style="max-width:1200px;margin:28px auto;padding:20px">
 <n-space justify="space-between" align="center"><h2>采集运行记录</h2><n-button @click="load">刷新</n-button></n-space>
-<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看本次 RSS / Python 来源、HTTP 状态码、CVE 数量、重复内容、直接推送、等级未知待审核及实际推送结果。手动刷新和定时采集统一执行 RSS + Python 爬虫，生成一条汇总记录；单独运行爬虫仍独立记录。只保留最近20次已完成的采集任务历史，正在执行中的任务不受影响。</n-alert>
+<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看本次 RSS / Python 来源、HTTP 状态码、CVE 数量、重复内容、直接推送、等级未知待审核及实际推送结果。手动刷新和定时采集统一执行 RSS + Python 爬虫，生成一条汇总记录；单独运行爬虫仍独立记录。仅独立 Python 爬虫采集运行历史保留最近20次；RSS、统一采集及定时采集历史不受该条数限制。运行编号是数据库 ID，历史记录被清理后可能不连续。</n-alert>
 <div style="width:100%;overflow-x:auto"><n-data-table :columns="columns" :data="rows" :loading="loading" :pagination="false" :row-key="r=>r.id" :scroll-x="1135"/></div>
-<n-space justify="end" style="margin-top:14px"><n-pagination v-model:page="page" :page-size="20" :item-count="total" @update:page="load"/></n-space>
+<n-space justify="space-between" align="center" style="margin-top:14px;flex-wrap:wrap"><n-text depth="3">实际保留 {{total}} 次运行记录，当前第 {{page}} / {{Math.max(1,Math.ceil(total/20))}} 页</n-text><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
 <n-modal v-model:show="visible" preset="card" title="本次运行详情" style="width:1000px;max-width:96vw">
 <n-space style="margin-bottom:12px"><n-tag>运行 #{{detail.id}}</n-tag><n-tag>{{detail.mode}}</n-tag><n-tag :type="detail.status==='完成'?'success':'warning'">{{detail.status}}</n-tag></n-space>
 <n-alert v-if="detail.summary?.error" type="error">{{detail.summary.error}}</n-alert>
@@ -32,7 +32,8 @@ const columns=[{title:'运行编号',key:'id',width:90},{title:'开始时间',ke
 const bjTime=value=>{if(!value)return '—';const raw=String(value);const normalized=/[zZ]$|[+-]\\d{2}:\\d{2}$/.test(raw)?raw:raw.replace(' ','T')+'Z';const d=new Date(normalized);return Number.isNaN(d.getTime())?raw:new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
 const tierLabel=x=>({direct:'直接处理',review:'等级未知审核',primary:'直接处理',secondary:'历史人工审核',article:'文章'})[x]||x||'-'
 const itemColumns=[{title:'来源',key:'source',width:130},{title:'处理方式',key:'tier',width:90,render:r=>tierLabel(r.tier)},{title:'标题',key:'title',ellipsis:{tooltip:true},render:r=>r.url?h('a',{href:r.url,target:'_blank',rel:'noopener noreferrer'},r.title):r.title},{title:'CVE',key:'cve',width:160},{title:'处理结果',key:'status',width:110},{title:'说明',key:'detail',width:180,ellipsis:{tooltip:true}}]
-async function load(){loading.value=true;try{const d=(await http.get('',{params:{page:page.value,size:20}})).data.data;rows.value=d.list;total.value=d.total}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
+async function load(){loading.value=true;try{let d=(await http.get('',{params:{page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('',{params:{page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
+function changePage(next){page.value=next;load()}
 async function open(r){try{detail.value=(await http.get('/'+r.id)).data.data;visible.value=true}catch(e){msg.error(e.response?.data?.detail||e.message)}}
 onMounted(load)
 </script>
