@@ -91,6 +91,16 @@
         每条进入 SCC_CVE 的日志都会保存源月份、源记录 ID、原始 JSON、接收时间、发送状态、发送尝试次数和失败原因。日志列表不再直接读取 SCC_TT，发送状态以 SCC_CVE 的记录表为准。
       </n-text>
     </n-card>
+
+    <n-card title="导出数据库内容" style="margin-top:16px">
+      <n-text depth="3" style="display:block;margin-bottom:12px">
+        只读导出 SCC_TT SQLite 中最新的日志，跨月份合并，保留原始 JSON 内容，不影响 MSOC 推送状态。
+      </n-text>
+      <n-space align="center">
+        <n-select v-model:value="exportCount" :options="exportOptions" style="width:180px"/>
+        <n-button type="primary" :loading="exporting" @click="exportDatabase">导出 CSV</n-button>
+      </n-space>
+    </n-card>
   </div>
 </template>
 
@@ -114,6 +124,9 @@ const testing=ref(false)
 const testingError=ref(false)
 const testingDb=ref(false)
 const polling=ref(false)
+const exporting=ref(false)
+const exportCount=ref(100)
+const exportOptions=[10,50,100,200,1000].map(n=>({label:`最近 ${n} 条`,value:n}))
 const form=ref({
   enabled:false,
   db_path:'/home/msocadmin/SCC_TT/data/webhook.db',
@@ -199,6 +212,30 @@ async function pollNow(){
     await refreshStatus()
   }finally{
     polling.value=false
+  }
+}
+async function exportDatabase(){
+  exporting.value=true
+  try{
+    const response=await api.get('/export',{params:{limit:exportCount.value},responseType:'blob'})
+    const blob=new Blob([response.data],{type:'text/csv;charset=utf-8'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a')
+    a.href=url
+    a.download='msoc_webhook_'+exportCount.value+'_'+new Date().toISOString().slice(0,10)+'.csv'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    msg.success('数据库内容已导出')
+  }catch(e){
+    let detail=e.message
+    if(e.response?.data instanceof Blob){
+      try{detail=JSON.parse(await e.response.data.text()).detail||detail}catch(_){/* ignore */}
+    }
+    msg.error(detail)
+  }finally{
+    exporting.value=false
   }
 }
 let timer
