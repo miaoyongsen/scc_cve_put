@@ -72,21 +72,12 @@ def send_smtp(item):
             server.send_message(msg)
     return True
 
-def send_vulnerability(item, ai_enabled=None):
-    """Returns individual channel results; errors are raised for callers to log."""
-    from .push_config import current
-    c=current()
-    is_article=item.get("content_type") in ("article","article_review")
-    # Security articles bypass vulnerability-only severity, source and quiet-hour filters.
-    if not is_article:
-        if c["severity_filter"] and item.get("severity") not in c["severity_filter"]:return {}
-        sources=[x.strip().casefold() for x in c["source_filter"].split(",") if x.strip()]
-        if sources and (item.get("from") or "").casefold() not in sources:return {}
-        from datetime import datetime
-        if c["quiet_start"] and c["quiet_end"]:
-            now=datetime.now().strftime("%H:%M")
-            start,end=c["quiet_start"],c["quiet_end"]
-            if (start<=now<end if start<end else now>=start or now<end):return {}
+def format_wecom_with_ai(item):
+    """Build the same AI-enriched content for automatic and reviewed CVEs.
+
+    Analysis happens before the digest sends, and reuses the CVE's successful
+    cached analysis whenever available. AI failures do not block the alert.
+    """
     # Single-threaded delivery: analyze first, then send one combined message.
     # AI is limited to vulnerability intelligence with a valid CVE and global switch.
     import logging
@@ -122,6 +113,25 @@ def send_vulnerability(item, ai_enabled=None):
     message=format_wecom(item)
     if ai_text:
         message+="\n\n## AI 研判（仅供参考）\n"+ai_text[:3000]
+    return message
+
+
+def send_vulnerability(item, ai_enabled=None):
+    """Returns individual channel results; errors are raised for callers to log."""
+    from .push_config import current
+    c=current()
+    is_article=item.get("content_type") in ("article","article_review")
+    # Security articles bypass vulnerability-only severity, source and quiet-hour filters.
+    if not is_article:
+        if c["severity_filter"] and item.get("severity") not in c["severity_filter"]:return {}
+        sources=[x.strip().casefold() for x in c["source_filter"].split(",") if x.strip()]
+        if sources and (item.get("from") or "").casefold() not in sources:return {}
+        from datetime import datetime
+        if c["quiet_start"] and c["quiet_end"]:
+            now=datetime.now().strftime("%H:%M")
+            start,end=c["quiet_start"],c["quiet_end"]
+            if (start<=now<end if start<end else now>=start or now<end):return {}
+    message=format_wecom_with_ai(item)
     from .notification_digest import queue_message
     if queue_message(item,message):
         if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
