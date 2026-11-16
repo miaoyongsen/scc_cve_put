@@ -268,3 +268,29 @@ def test_review_ai_runs_during_next_digest_not_during_confirmation(isolated_db, 
             review.Review.vulnerability_id==vid))=="approved"
         saved=db.query(ai_config.AIAnalysis).filter_by(vuln_key="CVE-2026-65432").first()
         assert saved and saved.result=="模拟 AI 研判结果"
+
+
+def test_ignored_review_remains_in_audit_list(isolated_db):
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="ignored-for-audit",title="Apache ignored finding",
+                                cve="CVE-2026-87654",severity="未知",source="test")
+        db.add(vuln)
+        db.flush()
+        vid=vuln.id
+        db.add(review.Review(vulnerability_id=vid,status="pending",matched_keyword="等级未知"))
+        db.commit()
+
+    result=review.reject(vid)
+    assert result["message"]=="rejected"
+    entries=review.pending_reviews()["data"]
+    record=next(row for row in entries if row["id"]==vid)
+    assert record["review_status"]=="rejected"
+    assert record["reviewed_at"] is not None
+    assert record["cve"]=="CVE-2026-87654"
+    with Session(isolated_db) as db:
+        assert db.get(core.Vulnerability,vid) is not None
+    # Ignoring must never make the record reappear in regular monitoring.
+    assert vid not in {row["id"] for row in core.list_vulnerabilities()["data"]["list"]}
+    with pytest.raises(HTTPException) as error:
+        review.approve(vid)
+    assert error.value.status_code==409
