@@ -78,7 +78,9 @@ def test_review_edit_duplicate_gate_and_visibility(isolated_db, monkeypatch):
     monkeypatch.setattr(notification_digest, "engine", isolated_db)
     monkeypatch.setattr(notifications, "engine", isolated_db, raising=False)
     monkeypatch.setattr("app.push_config.current", lambda: {
-        "wecom_enabled": True, "wecom_webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+        "wecom_enabled": True, "wecom_webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
+        "message_template": "## {title}\\n> {cve} {severity}",
+        "article_template": "",
     })
     sent=[]
     monkeypatch.setattr(notification_digest, "send_wecom_markdown",
@@ -142,7 +144,9 @@ def test_failed_next_digest_keeps_review_queued(isolated_db, monkeypatch):
         db.commit()
     review.approve(vuln_id)
     monkeypatch.setattr("app.push_config.current", lambda: {
-        "wecom_enabled": True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+        "wecom_enabled": True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
+        "message_template":"## {title}\\n> {cve} {severity}",
+        "article_template":"",
     })
     monkeypatch.setattr(notification_digest, "log_run", lambda *args, **kwargs: None)
     monkeypatch.setattr(notification_digest, "send_wecom_markdown",
@@ -218,3 +222,49 @@ def test_reject_review_edit_without_cve_and_known_severity(isolated_db):
     with pytest.raises(HTTPException) as error:
         review.edit_pending(vid,review.ReviewEditInput(cve="",severity="未知"))
     assert error.value.status_code==422
+
+
+def test_review_ai_runs_during_next_digest_not_during_confirmation(isolated_db, monkeypatch):
+    from app import notification_digest, notifications, ai_config
+    with Session(isolated_db) as db:
+        vuln=core.Vulnerability(key="ai-reviewed",title="Apache reviewed vulnerability",
+            cve="CVE-2026-65432",severity="高危",source="test")
+        db.add(vuln)
+        db.flush()
+        vid=vuln.id
+        db.add(review.Review(vulnerability_id=vid,status="pending"))
+        db.commit()
+
+    calls=[]
+    monkeypatch.setattr("app.push_config.current",lambda:{
+        "wecom_enabled":True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
+        "message_template":"## {title}\\n> {cve} {severity}",
+        "article_template":"",
+    })
+    monkeypatch.setattr(ai_config,"ai_enabled",lambda: True)
+    monkeypatch.setattr(ai_config,"analyze_intelligence",
+        lambda item: calls.append(item["cve"]) or "模拟 AI 研判结果")
+    monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
+    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda *args,**kwargs:None)
+    sent=[]
+    monkeypatch.setattr(notification_digest,"send_wecom_markdown",
+        lambda content,url=None: sent.append(content) or True)
+
+    assert review.approve(vid)["data"]["status"]=="queued"
+    assert calls==[]
+    assert sent==[]
+    token=notification_digest.begin_digest()
+    try:
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==1
+    assert calls==["CVE-2026-65432"]
+    assert len(sent)==1
+    assert "AI 研判：" in sent[0]
+    assert "模拟 AI 研判结果" in sent[0]
+    with Session(isolated_db) as db:
+        assert db.scalar(select(review.Review.status).where(
+            review.Review.vulnerability_id==vid))=="approved"
+        saved=db.query(ai_config.AIAnalysis).filter_by(vuln_key="CVE-2026-65432").first()
+        assert saved and saved.result=="模拟 AI 研判结果"
