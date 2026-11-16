@@ -92,21 +92,28 @@ def begin_run(mode):
         db.add(row);db.commit();db.refresh(row)
         return row.id
 
-RUN_HISTORY_LIMIT=20
+# Only independent Python crawler run histories are subject to the 20-run cap.
+# RSS, combined RSS+Python and vulnerability/article scheduled collection runs
+# are intentionally retained for audit and historical pagination.
+CRAWLER_RUN_HISTORY_LIMIT=20
+CRAWLER_RUN_MODES=("Python 爬虫","全部 Python 爬虫")
 
 
-def prune_collection_run_history(keep=RUN_HISTORY_LIMIT):
-    """Permanently retain only the newest completed collection-run histories.
+def prune_collection_run_history(keep=CRAWLER_RUN_HISTORY_LIMIT):
+    """Remove oldest *standalone Python crawler* runs and their event records.
 
-    This only affects collection_runs and the matching run_records. It never
-    deletes vulnerabilities, crawler findings, configured crawlers or reviews.
-    Running tasks are deliberately excluded from retention cleanup.
+    Never delete RSS or unified collection runs. Do not delete vulnerability
+    findings, crawler scripts, review data or independent event records.
     """
     from sqlalchemy import delete
     with Session(engine) as db:
         expired_ids=db.scalars(
             select(CollectionRun.id)
-            .where(CollectionRun.ended_at.is_not(None),CollectionRun.status!="running")
+            .where(
+                CollectionRun.ended_at.is_not(None),
+                CollectionRun.status!="running",
+                CollectionRun.mode.in_(CRAWLER_RUN_MODES),
+            )
             .order_by(CollectionRun.id.desc())
             .offset(keep)
         ).all()
