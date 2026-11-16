@@ -4,6 +4,8 @@ SCC_TT is a read-only source. MSOC delivery state and the log list are stored
 in SCC_CVE's own database. Each poll only reads the configured recent window;
 there is no historical catch-up after downtime.
 """
+import csv
+import io
 import json
 import logging
 import re
@@ -17,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint, Index, select, func
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -649,6 +652,52 @@ def test_database_connection():
         }
     except Exception as exc:
         raise HTTPException(503, str(exc)[:500])
+
+
+@router.get("/export")
+def export_database(limit: int = Query(default=100, description="最近日志条数")):
+    """Read-only export of SCC_TT raw SQLite records across monthly tables."""
+    if limit not in (10, 50, 100, 200, 1000):
+        raise HTTPException(422, "导出条数仅支持 10、50、100、200、1000")
+    config = _config()
+    try:
+        conn = _readonly_connection(config.db_path)
+        try:
+            records = []
+            for month in sorted(_existing_month_tables(conn), reverse=True):
+                table = "webhook_" + month
+                columns = {col["name"] for col in conn.execute('PRAGMA table_info("' + table + '")')}
+                if not {"id", "content", "received_at"}.issubset(columns):
+                    raise RuntimeError(table + " 表结构缺少 id、content 或 received_at")
+                rows = conn.execute(
+                    'SELECT id, content, received_at FROM "' + table + '" '
+                    'ORDER BY received_at DESC, id DESC LIMIT ?', (limit,)
+                ).fetchall()
+                records.extend((month, row) for row in rows)
+        finally:
+            conn.close()
+    except Exception as exc:
+        log.exception("MSOC export failed")
+        raise HTTPException(503, str(exc)[:500])
+    records.sort(key=lambda item: (
+        item[1]["received_at"] or "", item[0], item[1]["id"]
+    ), reverse=True)
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["source_month", "id", "received_at", "content"])
+    for month, row in records[:limit]:
+        # Prevent CSV formula execution in spreadsheet programs without losing text.
+        def safe(value):
+            value = str(value if value is not None else "")
+            return "'" + value if value.lstrip().startswith(("=", "+", "-", "@")) else value
+        writer.writerow([month, row["id"], safe(row["received_at"]), safe(row["content"])])
+    filename = "msoc_webhook_" + _now_dt().strftime("%Y%m%d_%H%M%S") + ".csv"
+    return Response(
+        content="\\ufeff".encode("utf-8").decode("unicode_escape") + output.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="' + filename + '"',
+                 "Cache-Control": "no-store"},
+    )
 
 
 @router.get("/months")
