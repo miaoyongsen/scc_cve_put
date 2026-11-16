@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app import core, review
+from app import core, review, ai_config
 from app.worker import upsert
 
 
