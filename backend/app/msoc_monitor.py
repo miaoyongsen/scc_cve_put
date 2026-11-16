@@ -693,7 +693,7 @@ def export_database(limit: int = Query(default=100, description="最近日志条
         writer.writerow([month, row["id"], safe(row["received_at"]), safe(row["content"])])
     filename = "msoc_webhook_" + _now_dt().strftime("%Y%m%d_%H%M%S") + ".csv"
     return Response(
-        content="\\ufeff".encode("utf-8").decode("unicode_escape") + output.getvalue(),
+        content="\ufeff" + output.getvalue(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="' + filename + '"',
                  "Cache-Control": "no-store"},
