@@ -95,7 +95,7 @@ async def lifespan(app):
     global _thread,_archive_thread
     from .msoc_monitor import start_monitor,stop_monitor
     _stop.clear()
-    # Apply the new 20-run retention once at startup, even before a new collection.
+    # Retain only the latest 20 standalone Python crawler runs at startup; never prune RSS/combined histories.
     try:
         from .core import prune_collection_run_history
         removed=prune_collection_run_history()
