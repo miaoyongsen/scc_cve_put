@@ -85,3 +85,102 @@ def test_digest_single_oversized_entry_is_isolated():
     lines=["常规" * 80, "极长" * 1400, "正常" * 90]
     chunks=build_digest_chunks(header, entries, lines)
     assert [[item["key"] for item in rows] for _,rows in chunks]==[["a"],["b"],["c"]]
+
+
+def test_digest_uses_saved_markdown_body_without_rebuilding_fixed_cards(monkeypatch):
+    from app import notification_digest, notifications
+    sent=[]
+    monkeypatch.setattr(notification_digest,"add_approved_reviews_to_digest",lambda digest:0)
+    monkeypatch.setattr(notification_digest,"current",lambda:{
+        "wecom_enabled":True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    monkeypatch.setattr(notification_digest,"send_wecom_markdown",
+                        lambda body,url=None: sent.append(body) or True)
+    monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
+    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
+    template_body=(
+        "## 我的 CVE 模板\\n"
+        "> **标题**：自定义漏洞\\n"
+        "> **CVE**：CVE-2026-12345\\n"
+        "> **披露日期**：2026-11-17\\n"
+        "> **修复建议**：请升级版本\\n"
+        "> [原始数据](https://example.com/detail)\\n"
+        "\\n## AI 研判（仅供参考）\\n"
+        "这是来自 DeepSeek 的研判详情。"
+    )
+    token=notification_digest.begin_digest()
+    try:
+        notification_digest.queue_message(
+            {"key":"custom-1","cve":"CVE-2026-12345","title":"自定义漏洞","severity":"中危"},
+            template_body
+        )
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==1
+    assert len(sent)==1
+    assert sent[0].startswith("## SCC CVE 漏洞情报汇总")
+    assert template_body in sent[0]
+    assert "> **披露日期**：2026-11-17" in sent[0]
+    assert "> **修复建议**：请升级版本" in sent[0]
+    assert "## AI 研判（仅供参考）" in sent[0]
+    assert "> **1. 自定义漏洞**" not in sent[0]
+
+
+def test_digest_preserves_separate_templates_in_multiple_parts(monkeypatch):
+    from app import notification_digest, notifications
+    sent=[]
+    monkeypatch.setattr(notification_digest,"add_approved_reviews_to_digest",lambda digest:0)
+    monkeypatch.setattr(notification_digest,"current",lambda:{
+        "wecom_enabled":True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    monkeypatch.setattr(notification_digest,"send_wecom_markdown",
+                        lambda body,url=None: sent.append(body) or True)
+    monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
+    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
+    token=notification_digest.begin_digest()
+    bodies=[]
+    try:
+        for n in range(4):
+            body=f"## 自定义模板 {n}\\n> 描述："+("独立漏洞的长描述。"*95)
+            bodies.append(body)
+            notification_digest.queue_message(
+                {"key":f"part-{n}","cve":f"CVE-2026-3456{n}","title":f"漏洞{n}","severity":"中危"},
+                body
+            )
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==4
+    assert len(sent)>1
+    assert all(len(body.encode("utf-8"))<=3500 for body in sent)
+    combined="\\n".join(sent)
+    for body in bodies:
+        assert combined.count(body)==1
+
+
+def test_digest_article_uses_article_template_message(monkeypatch):
+    from app import notification_digest, notifications
+    sent=[]
+    monkeypatch.setattr(notification_digest,"add_approved_reviews_to_digest",lambda digest:0)
+    monkeypatch.setattr(notification_digest,"current",lambda:{
+        "wecom_enabled":True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    monkeypatch.setattr(notification_digest,"send_wecom_markdown",
+                        lambda body,url=None: sent.append(body) or True)
+    monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
+    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
+    article="## 我的安全文章模板\\n> 文章来源：内部安全研究\\n> [全文](https://example.com)"
+    token=notification_digest.begin_digest()
+    try:
+        notification_digest.queue_message(
+            {"key":"article-1","content_type":"article","title":"安全文章"},
+            article
+        )
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==1
+    assert len(sent)==1
+    assert sent[0].startswith("## SCC CVE 安全文章汇总")
+    assert article in sent[0]
