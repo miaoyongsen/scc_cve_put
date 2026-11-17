@@ -184,3 +184,42 @@ def test_digest_article_uses_article_template_message(monkeypatch):
     assert len(sent)==1
     assert sent[0].startswith("## SCC CVE 安全文章汇总")
     assert article in sent[0]
+
+def test_digest_normalizes_legacy_escaped_newlines_and_separates_ai(monkeypatch):
+    from app import notification_digest, notifications
+    sent=[]
+    monkeypatch.setattr(notification_digest,"add_approved_reviews_to_digest",lambda digest:0)
+    monkeypatch.setattr(notification_digest,"current",lambda:{
+        "wecom_enabled":True,
+        "wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test"
+    })
+    monkeypatch.setattr(notification_digest,"send_wecom_markdown",
+                        lambda body,url=None: sent.append(body) or True)
+    monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
+    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
+    token=notification_digest.begin_digest()
+    try:
+        for n in range(2):
+            # Real code from the legacy deployment sometimes saved escapes.
+            body=("## CVE 漏洞情报"+chr(92)+"n"
+                  +f"> **标题**：漏洞{n}"+chr(92)+"n"
+                  +"> **等级**：高危"+chr(92)+"n"
+                  +chr(92)+"n## AI 研判（仅供参考）"+chr(92)+"n"
+                  +f"模拟研判{n}")
+            notification_digest.queue_message(
+                {"key":f"legacy-{n}","cve":f"CVE-2026-8900{n}","severity":"高危"},
+                body
+            )
+        result=notification_digest.flush_digest()
+    finally:
+        notification_digest.end_digest(token)
+    assert result["notifications"]==2
+    assert len(sent)==1
+    text=sent[0]
+    assert "nn##" not in text
+    assert chr(92)+"n" not in text
+    assert "## CVE 漏洞情报\\n> **标题**：漏洞0" in text
+    assert "模拟研判0\\n\\n> ━━━━━━━━━━━━━━━━━━━━\\n\\n## CVE 漏洞情报" in text
+    assert text.count("## CVE 漏洞情报")==2
+    assert "模拟研判1" in text
+
