@@ -129,13 +129,12 @@ def flush_digest():
         # fields, line breaks, links and other template content.
         # Use real newlines, not literal backslash-n sequences. The latter
         # appeared as "nn##" in WeCom and glued AI analysis to the next CVE.
-        # Keep the saved template and AI content intact, adding only clean
-        # spacing and a visible separator between different findings.
+        # Keep each saved template and its AI text intact. Separate entries
+        # by blank lines only; avoid decorative horizontal rules.
         lines=[]
-        for position, (_, message) in enumerate(entries):
+        for _, message in entries:
             body=normalize_digest_body(message)
-            separator="\n\n> ━━━━━━━━━━━━━━━━━━━━\n\n" if position else "\n\n"
-            lines.append(separator+body+"\n")
+            lines.append("\n\n"+body+"\n")
 
         # One UTF-8 budget at the digest layer avoids unintended double-splits.
         chunks=build_digest_chunks(header,entries,lines)
