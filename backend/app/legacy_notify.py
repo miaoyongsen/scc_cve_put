@@ -112,7 +112,9 @@ def format_wecom_with_ai(item):
             logging.getLogger(__name__).exception("AI analysis failed for %s; sending original intelligence",cve)
     message=format_wecom(item)
     if ai_text:
-        message+="\n> **AI研判：** "+ " ".join(ai_text[:3000].split())
+        # No empty line before AI: keep it inside the same Markdown quote block
+        # as the vulnerability fields (one continuous grey bar in WeCom).
+        message=message.rstrip("\r\n")+"\n> **AI研判：** "+" ".join(ai_text[:3000].split())
     return message
 
 
