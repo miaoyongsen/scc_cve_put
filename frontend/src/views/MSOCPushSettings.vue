@@ -12,7 +12,7 @@
     </n-space>
 
     <n-alert type="info" style="margin:14px 0">
-      查询间隔同时代表查询时间范围：选择 3 分钟，就只查询最近 3 分钟的数据；选择 5 分钟，就只查询最近 5 分钟的数据。服务停机期间超出当前时间窗口的记录不补推；发送失败的记录也只保留未发送状态，不自动重试，所有已入库记录都会保留在日志列表中。
+      查询间隔同时代表查询时间范围：选择 3 分钟，就只查询最近 3 分钟的数据；选择 5 分钟，就只查询最近 5 分钟的数据。MSOC 日志会自动补齐 SCC_TT 各月份的历史记录；补录历史只用于查看和复盘，不会补推旧消息。正常企业微信推送仍只针对最近时间窗口内的首次待发送记录；发送失败不会自动重试。
     </n-alert>
 
     <n-grid :cols="4" :x-gap="12" :y-gap="12" responsive="screen" style="margin-bottom:16px">
@@ -88,7 +88,7 @@
         <n-descriptions-item label="未发送记录">{{status.unsent_records??0}} 条</n-descriptions-item>
       </n-descriptions>
       <n-text depth="3" style="display:block;margin-top:10px">
-        每条进入 SCC_CVE 的日志都会保存源月份、源记录 ID、原始 JSON、接收时间、发送状态、发送尝试次数和失败原因。日志列表不再直接读取 SCC_TT，发送状态以 SCC_CVE 的记录表为准。
+        每次轮询会补齐 SCC_TT 中尚未同步的历史日志，并在 SCC_CVE 中保留源月份、源记录 ID、原始 JSON、接收时间、发送状态和失败原因。历史补录只更新日志列表，不触发企业微信补推。
       </n-text>
     </n-card>
 
@@ -205,7 +205,7 @@ async function pollNow(){
   polling.value=true
   try{
     const d=(await api.post('/poll')).data.data
-    msg.success('窗口内 '+(d.count||0)+' 条，新增入库 '+(d.captured||0)+' 条，成功推送 '+(d.pushed||0)+' 条，未发送 '+(d.unsent||0)+' 条')
+    msg.success('窗口内 '+(d.count||0)+' 条，历史补录 '+(d.backfilled||0)+' 条，本次入库 '+(d.captured||0)+' 条，推送 '+(d.pushed||0)+' 条')
     await refreshStatus()
   }catch(e){
     msg.error(e.response?.data?.detail||e.message)
