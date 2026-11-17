@@ -145,7 +145,7 @@ def test_failed_next_digest_keeps_review_queued(isolated_db, monkeypatch):
     review.approve(vuln_id)
     monkeypatch.setattr("app.push_config.current", lambda: {
         "wecom_enabled": True,"wecom_webhook":"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test",
-        "message_template":"## {title}\\n> {cve} {severity}",
+        "message_template":"## {title}\\n> {cve} {severity}\\n\\n",
         "article_template":"",
     })
     monkeypatch.setattr(notification_digest, "log_run", lambda *args, **kwargs: None)
@@ -262,6 +262,8 @@ def test_review_ai_runs_during_next_digest_not_during_confirmation(isolated_db, 
     assert calls==["CVE-2026-65432"]
     assert len(sent)==1
     assert "> **AI研判：** 模拟 AI 研判结果" in sent[0]
+    assert "> CVE-2026-65432 🟠 <font color=\"warning\">高危</font>\n> **AI研判：**" in sent[0]
+    assert "\n\n> **AI研判：**" not in sent[0]
     assert "模拟 AI 研判结果" in sent[0]
     with Session(isolated_db) as db:
         assert db.scalar(select(review.Review.status).where(
