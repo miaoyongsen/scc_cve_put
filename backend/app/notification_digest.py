@@ -19,10 +19,9 @@ def normalize_digest_body(message):
     """Normalize legacy escaped newlines while preserving template Markdown."""
     import re
     body=str(message or "")
-    # Older saved templates and queued messages may contain one or more
-    # literal backslash-n escapes instead of real newline characters.
-    body=re.sub(r"(?:\\\\)+n", "\\n", body)
-    return body.strip("\\n")
+    # Replace literal \n escapes left by older templates or digest code.
+    body=re.sub(r"(?:\\)+n", "\n", body)
+    return body.strip("\n")
 
 
 def build_digest_chunks(header, entries, lines):
@@ -135,9 +134,8 @@ def flush_digest():
         lines=[]
         for position, (_, message) in enumerate(entries):
             body=normalize_digest_body(message)
-            separator="\\n\\n> ━━━━━━━━━━━━━━━━━━━━\\n\\n" if position else "\\n\\n"
-            lines.append(separator+body+"\\n")
-
+            separator="\n\n> ━━━━━━━━━━━━━━━━━━━━\n\n" if position else "\n\n"
+            lines.append(separator+body+"\n")
 
         # One UTF-8 budget at the digest layer avoids unintended double-splits.
         chunks=build_digest_chunks(header,entries,lines)
