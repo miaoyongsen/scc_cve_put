@@ -1,8 +1,8 @@
 """Independent MSOC monitor.
 
 SCC_TT is a read-only source. MSOC delivery state and the log list are stored
-in SCC_CVE's own database. Each poll only reads the configured recent window;
-there is no historical catch-up after downtime.
+in SCC_CVE's own database. Each poll syncs source records for audit, but only
+recent-window records are eligible for WeCom delivery.
 """
 import csv
 import io
@@ -282,7 +282,44 @@ def _read_recent_source(path, minutes):
         conn.close()
 
 
-def _capture_records(source_db, records):
+def _sync_source_history(path):
+    """Backfill missing SCC_TT records into MSOC logs without sending them.
+
+    Scan all monthly source tables read-only and insert only missing composite
+    (database path, month, source ID) identities. Stream in bounded batches
+    instead of loading the full source history into memory.
+    """
+    source_db = _canonical_db_path(path)
+    conn = _readonly_connection(source_db)
+    captured = 0
+    try:
+        for month in sorted(_existing_month_tables(conn)):
+            table = "webhook_" + month
+            columns = {item["name"] for item in conn.execute('PRAGMA table_info("' + table + '")')}
+            if not {"id", "content", "received_at"}.issubset(columns):
+                raise RuntimeError(table + " 表结构不符合预期，需要 id、content、received_at 三列")
+            cursor = conn.execute(
+                'SELECT id, content, received_at FROM "' + table + '" ORDER BY id ASC'
+            )
+            while True:
+                batch = cursor.fetchmany(400)
+                if not batch:
+                    break
+                records = [{
+                    "source_db": source_db,
+                    "source_month": month,
+                    "source_id": int(item["id"]),
+                    "content": item["content"],
+                    "received_at": item["received_at"] or "",
+                } for item in batch]
+                added, _ = _capture_records(source_db, records, include_unsent=False)
+                captured += added
+        return captured
+    finally:
+        conn.close()
+
+
+def _capture_records(source_db, records, include_unsent=True):
     """Persist all seen source records in SCC_CVE, initially marked unsent."""
     if not records:
         return 0, []
@@ -321,24 +358,25 @@ def _capture_records(source_db, records):
                         ))
                         captured += 1
                 db.flush()
-                rows = db.scalars(
-                    select(MSOCDelivery).where(
-                        MSOCDelivery.source_db == source_db,
-                        MSOCDelivery.source_month == month,
-                        MSOCDelivery.source_id.in_(ids),
-                        MSOCDelivery.sent.is_(False),
-                        MSOCDelivery.attempt_count == 0,
-                    ).order_by(MSOCDelivery.received_at.asc(), MSOCDelivery.source_id.asc())
-                ).all()
-                for row in rows:
-                    unsent.append({
-                        "id": row.id,
-                        "source_month": row.source_month,
-                        "source_id": row.source_id,
-                        "content": row.content,
-                        "received_at": row.received_at,
-                        "attempt_count": row.attempt_count,
-                    })
+                if include_unsent:
+                    rows = db.scalars(
+                        select(MSOCDelivery).where(
+                            MSOCDelivery.source_db == source_db,
+                            MSOCDelivery.source_month == month,
+                            MSOCDelivery.source_id.in_(ids),
+                            MSOCDelivery.sent.is_(False),
+                            MSOCDelivery.attempt_count == 0,
+                        ).order_by(MSOCDelivery.received_at.asc(), MSOCDelivery.source_id.asc())
+                    ).all()
+                    for row in rows:
+                        unsent.append({
+                            "id": row.id,
+                            "source_month": row.source_month,
+                            "source_id": row.source_id,
+                            "content": row.content,
+                            "received_at": row.received_at,
+                            "attempt_count": row.attempt_count,
+                        })
         db.commit()
     unsent.sort(key=lambda item: (item["received_at"], item["source_month"], item["source_id"]))
     return captured, unsent
@@ -423,11 +461,14 @@ def _poll_once_impl():
         config.db_path, config.poll_interval
     )
     captured, unsent = _capture_records(source_db, source_records)
+    # Keep log history complete regardless of the current 1/3/5-minute window.
+    # Historical backfills are never part of 'unsent' and cannot be pushed.
+    backfilled = _sync_source_history(config.db_path)
     _save_status(last_query=_now(), last_error="")
 
     with _state_lock:
         _state["last_query_count"] = len(source_records)
-        _state["last_captured_count"] = captured
+        _state["last_captured_count"] = captured + backfilled
 
     pushed = 0
     if config.wecom_enabled:
@@ -438,7 +479,8 @@ def _poll_once_impl():
     counts = _delivery_counts(source_db)
     return {
         "count": len(source_records),
-        "captured": captured,
+        "captured": captured + backfilled,
+        "backfilled": backfilled,
         "pushed": pushed,
         "unsent": counts["unsent_records"],
         "window_start": start_text,
