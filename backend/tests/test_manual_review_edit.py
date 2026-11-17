@@ -261,7 +261,7 @@ def test_review_ai_runs_during_next_digest_not_during_confirmation(isolated_db, 
     assert result["notifications"]==1
     assert calls==["CVE-2026-65432"]
     assert len(sent)==1
-    assert "## AI 研判（仅供参考）" in sent[0]
+    assert "### AI 研判（仅供参考）" in sent[0]
     assert "模拟 AI 研判结果" in sent[0]
     with Session(isolated_db) as db:
         assert db.scalar(select(review.Review.status).where(
