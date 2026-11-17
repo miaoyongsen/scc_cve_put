@@ -122,7 +122,7 @@ def flush_digest():
             result["errors"].append(label+": 未启用或未配置企业微信机器人")
             for item,_ in entries:log_run(item,"article" if kind=="article" else "direct","推送未成功","无有效企业微信渠道")
             continue
-        header="## SCC CVE "+label+"汇总\n> 采集时间："+datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")+"\n> 共 "+str(len(entries))+" 条\n"
+        header="## SCC CVE "+label+"汇总\n> **采集时间**："+datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")+"\n> **情报数量**："+str(len(entries))+" 条\n"
         # The upstream formatter has already expanded the user-configured
         # Markdown template and appended the CVE's AI analysis (when enabled).
         # Do not rebuild a hard-coded card here: that would discard custom
