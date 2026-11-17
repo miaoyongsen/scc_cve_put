@@ -1,4 +1,4 @@
-"""Per-collection notification digest. Does not affect manual approval pushes."""
+"""Per-collection notification digest, including deferred manual approvals."""
 from contextvars import ContextVar
 from datetime import datetime
 import os
@@ -114,25 +114,11 @@ def flush_digest():
             for item,_ in entries:log_run(item,"article" if kind=="article" else "direct","推送未成功","无有效企业微信渠道")
             continue
         header="## SCC CVE "+label+"汇总\n> 采集时间："+datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")+"\n> 共 "+str(len(entries))+" 条\n"
-        # Build readable summary entries, then split by UTF-8 bytes.  The
-        # shared WeCom sender will further segment any single oversize entry.
-        # Never truncate an entry just to fit a message limit.
-        lines=[]
-        for i,(item,message) in enumerate(entries,1):
-            link=(item.get("references") or [item.get("url") or ""])[0]
-            title=str(item.get("title") or "未命名").replace("\n"," ").strip()
-            source=str(item.get("from") or item.get("source") or "未知来源")
-            cve=str(item.get("cve") or "")
-            severity=str(item.get("severity") or "")
-            badges={"严重":"🔴","高危":"🟠","中危":"🟡","低危":"🟢","未知":"⚪"}
-            severity_label=badges.get(severity,"⚪")+" "+severity
-            if severity in ("严重","高危"):
-                severity_label=badges[severity]+' <font color="warning">'+severity+"</font>"
-            line=f"\n> **{i}. {title}**\n> {severity_label} {cve} · {source}\n"
-            ai=message.partition("AI 研判（仅供参考）")[2].strip() if "AI 研判（仅供参考）" in message else ""
-            if ai:line+="> AI 研判："+" ".join(ai.split())+"\n"
-            if link:line+="> [查看原文]("+str(link)+")\n"
-            lines.append(line)
+        # The upstream formatter has already expanded the user-configured
+        # Markdown template and appended the CVE's AI analysis (when enabled).
+        # Do not rebuild a hard-coded card here: that would discard custom
+        # fields, line breaks, links and other template content.
+        lines=["\\n\\n"+str(message).strip("\\n")+"\\n" for _,message in entries]
 
         # One UTF-8 budget at the digest layer avoids unintended double-splits.
         chunks=build_digest_chunks(header,entries,lines)
