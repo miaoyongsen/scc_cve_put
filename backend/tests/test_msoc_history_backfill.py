@@ -2,7 +2,7 @@
 import os
 import sqlite3
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, select, func
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
@@ -32,22 +32,25 @@ def test_msoc_backfills_older_records_but_only_pushes_current_window(tmp_path, m
     })())
     monkeypatch.setattr(msoc_monitor,"_save_status",lambda **kwargs:None)
     pushed=[]
-    monkeypatch.setattr(msoc_monitor,"_send_deliveries",
-                        lambda rows,webhook:pushed.extend(rows) or len(rows))
+    monkeypatch.setattr(msoc_monitor,"_send_markdown",
+                        lambda webhook,body:pushed.append(body) or True)
     result=msoc_monitor._poll_once_impl()
     assert result["count"]==1
     assert result["backfilled"]==1
     assert result["captured"]==2
-    assert [r["source_id"] for r in pushed]==[2]
+    assert result["pushed"]==1
+    assert len(pushed)==1
+    assert '"recent":true' in pushed[0]
+    assert '"older":true' not in pushed[0]
     with Session(local) as db:
         rows=db.scalars(select(msoc_monitor.MSOCDelivery).order_by(
             msoc_monitor.MSOCDelivery.source_id)).all()
         assert len(rows)==2
         assert rows[0].source_id==1 and rows[0].sent is False
-        assert rows[1].source_id==2
+        assert rows[1].source_id==2 and rows[1].sent is True
     # Repeating synchronization is idempotent, and history is never pushed.
     pushed.clear()
     result=msoc_monitor._poll_once_impl()
     assert result["backfilled"]==0
     assert result["captured"]==0
-    assert [r["source_id"] for r in pushed]==[2]
+    assert pushed==[]
