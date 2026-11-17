@@ -31,7 +31,7 @@
 <n-form-item label="静默开始时间（HH:MM，服务器本地时间）"><n-input v-model:value="form.quiet_start" placeholder="例如 23:00"/></n-form-item>
 <n-form-item label="静默结束时间（HH:MM）"><n-input v-model:value="form.quiet_end" placeholder="例如 08:00"/></n-form-item>
 <n-button type="primary" :loading="saving" @click="save">保存全部规则</n-button>
-</n-card><n-card title="企业微信推送模板" style="margin-top:16px"><n-alert type="info" style="margin-bottom:12px">支持变量：{title} 标题、{cve} 编号、{severity} 等级、{source} 来源、{disclosure} 日期、{description} 描述、{solutions} 修复建议、{url} 原始链接。修改后保存即生效。</n-alert><n-input v-model:value="form.message_template" type="textarea" :rows="12" placeholder="输入 Markdown 推送模板"/><n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存推送模板</n-button><n-button @click="resetTemplate">恢复默认模板（需保存）</n-button></n-space><h3>实时预览</h3><pre style="white-space:pre-wrap;background:#f5f7fa;padding:16px;border-radius:6px">{{preview}}</pre></n-card><n-card title="安全文章推送模板" style="margin-top:16px"><n-alert type="info" style="margin-bottom:12px">非 RSS 爬虫安全文章使用此独立模板。{disclosure} 显示采集时间；支持 {title}、{cve}、{severity}、{source}、{description}、{url} 等变量；文章等级不着色。</n-alert><n-input v-model:value="form.article_template" type="textarea" :rows="8" placeholder="输入安全文章 Markdown 模板"/><n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存文章模板</n-button><n-button @click="resetArticleTemplate">恢复默认文章模板（需保存）</n-button></n-space><h3>文章预览</h3><pre style="white-space:pre-wrap;background:#f5f7fa;padding:16px;border-radius:6px">{{articlePreview}}</pre></n-card></div>
+</n-card><n-card title="企业微信推送模板" style="margin-top:16px"><n-alert type="info" style="margin-bottom:12px">支持变量：{title} 标题、{cve} 编号、{severity} 等级、{source} 来源、{disclosure} 日期、{description} 描述、{solutions} 修复建议、{url} 原始链接。直接按回车换行；旧模板中的 \\n 会自动转成真实换行。修改后保存即生效。</n-alert><n-input v-model:value="form.message_template" type="textarea" :rows="12" placeholder="输入 Markdown 推送模板"/><n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存推送模板</n-button><n-button @click="resetTemplate">恢复默认模板（需保存）</n-button></n-space><h3>实时预览</h3><pre style="white-space:pre-wrap;background:#f5f7fa;padding:16px;border-radius:6px">{{preview}}</pre></n-card><n-card title="安全文章推送模板" style="margin-top:16px"><n-alert type="info" style="margin-bottom:12px">非 RSS 爬虫安全文章使用此独立模板。{disclosure} 显示采集时间；支持 {title}、{cve}、{severity}、{source}、{description}、{url} 等变量；文章等级不着色。</n-alert><n-input v-model:value="form.article_template" type="textarea" :rows="8" placeholder="输入安全文章 Markdown 模板"/><n-space style="margin-top:12px"><n-button type="primary" :loading="saving" @click="save">保存文章模板</n-button><n-button @click="resetArticleTemplate">恢复默认文章模板（需保存）</n-button></n-space><h3>文章预览</h3><pre style="white-space:pre-wrap;background:#f5f7fa;padding:16px;border-radius:6px">{{articlePreview}}</pre></n-card></div>
 </template>
 <script setup>
 import {ref,computed,onMounted,h} from 'vue'
@@ -49,6 +49,18 @@ const savedColumns=[{title:'配置名称',key:'name'},{title:'状态',key:'statu
 const defaultTemplate="## WatchVuln 漏洞情报\n> **标题**：{title}\n> **CVE**：{cve}\n> **等级**：{severity}\n> **来源**：{source}\n> **披露日期**：{disclosure}\n> **原始数据**：[查看原文]({url})"
 const defaultErrorTemplate="## 🚨 SCC CVE 采集异常告警\n> **任务**：{task}\n> **时间**：{time}\n> **异常详情**：\n{details}\n\n> 请检查「运行记录」及对应采集源。"
 const defaultArticleTemplate="## WatchVuln 安全文章\n> **标题**：{title}\n> **CVE**：{cve}\n> **危害等级**：{severity}\n> **来源**：{source}\n> **采集时间**：{disclosure}\n> **原始数据**：[查看原文]({url})"
+// Convert legacy literal \n (including double-escaped variants) into real line breaks.
+function normalizeTemplateNewlines(value){
+  return String(value??'').replace(/\\+n/g,'\n')
+}
+const templateFields=['message_template','article_template','error_message_template']
+function normalizeTemplates(data){
+  const result={...data}
+  for(const key of templateFields){
+    if(typeof result[key]==='string')result[key]=normalizeTemplateNewlines(result[key])
+  }
+  return result
+}
 const form=ref({wecom_enabled:false,wecom_webhook:'',error_wecom_enabled:false,error_wecom_webhook:'',error_message_template:defaultErrorTemplate,severity_filter:[],source_filter:'',quiet_start:'',quiet_end:'',dedup_hours:0,message_template:defaultTemplate,article_template:defaultArticleTemplate})
 function resetErrorTemplate(){form.value.error_message_template=defaultErrorTemplate}
 const errorPreview=computed(()=>{
@@ -57,16 +69,16 @@ const errorPreview=computed(()=>{
     time:'2026-11-13 15:59:11 +0800',
     details:['> • 奇安信cve采集：408，爬虫执行超过35秒','> • 来源：奇安信cve采集；HTTP：未知'].join('\n')
   }
-  let result=(form.value.error_message_template||'').split('\\n').join('\n')
+  let result=normalizeTemplateNewlines(form.value.error_message_template)
   for(const [key,value] of Object.entries(sample)){
     result=result.split('{'+key+'}').join(value)
   }
   return result
 })
 function resetArticleTemplate(){form.value.article_template=defaultArticleTemplate}
-const articlePreview=computed(()=>{const sample={title:"示例安全文章",cve:"CVE-2026-12345",severity:"高危",source:"安全研究团队",disclosure:"2026-10-28 08:38:00",description:"文章摘要",url:"https://example.com"};let result=(form.value.article_template||"").replace(/\\\\+n/g,"\n");for(const [key,value] of Object.entries(sample))result=result.split("{"+key+"}").join(value);return result})
+const articlePreview=computed(()=>{const sample={title:"示例安全文章",cve:"CVE-2026-12345",severity:"高危",source:"安全研究团队",disclosure:"2026-10-28 08:38:00",description:"文章摘要",url:"https://example.com"};let result=normalizeTemplateNewlines(form.value.article_template);for(const [key,value] of Object.entries(sample))result=result.split("{"+key+"}").join(value);return result})
 function resetTemplate(){form.value.message_template=defaultTemplate}
-const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=(form.value.message_template||'').replace(/\\\\+n/g,"\n");for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
+const preview=computed(()=>{const sample={title:'Apache 示例漏洞',cve:'CVE-2026-12345',severity:'高危',source:'奇安信',disclosure:'2026-10-26',description:'示例漏洞描述',solutions:'参考官方修复公告',url:'https://example.com'};let result=normalizeTemplateNewlines(form.value.message_template);for(const [key,value] of Object.entries(sample))result=result.split('{'+key+'}').join(value);return result})
 const aiSources=ref([]),loadingSources=ref(false)
 const authHeaders=()=>({Authorization:'Bearer '+(localStorage.getItem('token')||'')})
 const aiColumns=[{title:'情报来源',key:'name'},{title:'来源类型',key:'kind',render:r=>r.kind==='rss'?'RSS':'Python 爬虫'},{title:'AI 联动',key:'ai_enabled',render:r=>h(NSwitch,{value:!!r.ai_enabled,'onUpdate:value':v=>toggleAI(r,v)})}]
@@ -81,8 +93,8 @@ await axios.put(url,body,{headers:authHeaders()});row.ai_enabled=value;msg.succe
 }catch(e){msg.error(e.response?.data?.detail||e.message)}}
 const http=axios.create({baseURL:'/api/v1/settings/push'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
-async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;hasErrorWebhook.value=d.has_error_webhook;form.value={...form.value,...d}}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
-async function save(){saving.value=true;try{await http.put('',form.value);msg.success('配置已保存');await load()}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{saving.value=false}}
+async function load(){try{const d=(await http.get('')).data.data;hasWebhook.value=d.has_webhook;hasErrorWebhook.value=d.has_error_webhook;form.value=normalizeTemplates({...form.value,...d})}catch(e){msg.error(String(e.response?.data?.detail||e.message))}}
+async function save(){saving.value=true;try{const payload=normalizeTemplates(form.value);await http.put('',payload);form.value=payload;msg.success('配置已保存');await load()}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{saving.value=false}}
 async function test(){testing.value=true;try{await http.post('/test');msg.success('测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testing.value=false}}
 async function testError(){testingError.value=true;try{await http.post('/test-error');msg.success('异常测试消息已发送')}catch(e){msg.error(String(e.response?.data?.detail||e.message))}finally{testingError.value=false}}
 onMounted(()=>{load();loadSources()})
