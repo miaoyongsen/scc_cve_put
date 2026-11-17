@@ -99,13 +99,13 @@ def test_digest_uses_saved_markdown_body_without_rebuilding_fixed_cards(monkeypa
     monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
     monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
     template_body=(
-        "## 我的 CVE 模板\\n"
-        "> **标题**：自定义漏洞\\n"
-        "> **CVE**：CVE-2026-12345\\n"
-        "> **披露日期**：2026-11-17\\n"
-        "> **修复建议**：请升级版本\\n"
-        "> [原始数据](https://example.com/detail)\\n"
-        "\\n## AI 研判（仅供参考）\\n"
+        "## 我的 CVE 模板\n"
+        "> **标题**：自定义漏洞\n"
+        "> **CVE**：CVE-2026-12345\n"
+        "> **披露日期**：2026-11-17\n"
+        "> **修复建议**：请升级版本\n"
+        "> [原始数据](https://example.com/detail)\n"
+        "\n## AI 研判（仅供参考）\n"
         "这是来自 DeepSeek 的研判详情。"
     )
     token=notification_digest.begin_digest()
@@ -142,7 +142,7 @@ def test_digest_preserves_separate_templates_in_multiple_parts(monkeypatch):
     bodies=[]
     try:
         for n in range(4):
-            body=f"## 自定义模板 {n}\\n> 描述："+("独立漏洞的长描述。"*95)
+            body=f"## 自定义模板 {n}\n> 描述："+("独立漏洞的长描述。"*95)
             bodies.append(body)
             notification_digest.queue_message(
                 {"key":f"part-{n}","cve":f"CVE-2026-3456{n}","title":f"漏洞{n}","severity":"中危"},
@@ -154,7 +154,7 @@ def test_digest_preserves_separate_templates_in_multiple_parts(monkeypatch):
     assert result["notifications"]==4
     assert len(sent)>1
     assert all(len(body.encode("utf-8"))<=3500 for body in sent)
-    combined="\\n".join(sent)
+    combined="\n".join(sent)
     for body in bodies:
         assert combined.count(body)==1
 
@@ -170,7 +170,7 @@ def test_digest_article_uses_article_template_message(monkeypatch):
                         lambda body,url=None: sent.append(body) or True)
     monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
     monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
-    article="## 我的安全文章模板\\n> 文章来源：内部安全研究\\n> [全文](https://example.com)"
+    article="## 我的安全文章模板\n> 文章来源：内部安全研究\n> [全文](https://example.com)"
     token=notification_digest.begin_digest()
     try:
         notification_digest.queue_message(
@@ -218,8 +218,8 @@ def test_digest_normalizes_legacy_escaped_newlines_and_separates_ai(monkeypatch)
     text=sent[0]
     assert "nn##" not in text
     assert chr(92)+"n" not in text
-    assert "## CVE 漏洞情报\\n> **标题**：漏洞0" in text
-    assert "模拟研判0\\n\\n> ━━━━━━━━━━━━━━━━━━━━\\n\\n## CVE 漏洞情报" in text
+    assert "## CVE 漏洞情报\n> **标题**：漏洞0" in text
+    assert "模拟研判0\n\n> ━━━━━━━━━━━━━━━━━━━━\n\n## CVE 漏洞情报" in text
     assert text.count("## CVE 漏洞情报")==2
     assert "模拟研判1" in text
 
