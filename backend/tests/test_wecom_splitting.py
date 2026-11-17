@@ -219,7 +219,7 @@ def test_digest_normalizes_legacy_escaped_newlines_and_separates_ai(monkeypatch)
     assert "nn##" not in text
     assert chr(92)+"n" not in text
     assert "## CVE 漏洞情报\n> **标题**：漏洞0" in text
-    assert "模拟研判0\n\n> ━━━━━━━━━━━━━━━━━━━━\n\n## CVE 漏洞情报" in text
+    assert "模拟研判0\n\n\n## CVE 漏洞情报" in text\n    assert "━━━━━━━━" not in text
     assert text.count("## CVE 漏洞情报")==2
     assert "模拟研判1" in text
 
