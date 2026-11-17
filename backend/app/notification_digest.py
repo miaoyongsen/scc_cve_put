@@ -15,6 +15,16 @@ DIGEST_PART_LABEL_BYTES=120
 def _bytes(value):
     return len(value.encode("utf-8"))
 
+def normalize_digest_body(message):
+    """Normalize legacy escaped newlines while preserving template Markdown."""
+    import re
+    body=str(message or "")
+    # Older saved templates and queued messages may contain one or more
+    # literal backslash-n escapes instead of real newline characters.
+    body=re.sub(r"(?:\\\\)+n", "\\n", body)
+    return body.strip("\\n")
+
+
 def build_digest_chunks(header, entries, lines):
     """Pack complete vulnerability entries, never split between their fields.
 
@@ -118,7 +128,16 @@ def flush_digest():
         # Markdown template and appended the CVE's AI analysis (when enabled).
         # Do not rebuild a hard-coded card here: that would discard custom
         # fields, line breaks, links and other template content.
-        lines=["\\n\\n"+str(message).strip("\\n")+"\\n" for _,message in entries]
+        # Use real newlines, not literal backslash-n sequences. The latter
+        # appeared as "nn##" in WeCom and glued AI analysis to the next CVE.
+        # Keep the saved template and AI content intact, adding only clean
+        # spacing and a visible separator between different findings.
+        lines=[]
+        for position, (_, message) in enumerate(entries):
+            body=normalize_digest_body(message)
+            separator="\\n\\n> ━━━━━━━━━━━━━━━━━━━━\\n\\n" if position else "\\n\\n"
+            lines.append(separator+body+"\\n")
+
 
         # One UTF-8 budget at the digest layer avoids unintended double-splits.
         chunks=build_digest_chunks(header,entries,lines)
