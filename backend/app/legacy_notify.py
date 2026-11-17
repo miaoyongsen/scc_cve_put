@@ -112,7 +112,7 @@ def format_wecom_with_ai(item):
             logging.getLogger(__name__).exception("AI analysis failed for %s; sending original intelligence",cve)
     message=format_wecom(item)
     if ai_text:
-        message+="\n\n### AI 研判（仅供参考）\n\n"+ai_text[:3000]
+        message+="\n> **AI研判：** "+ " ".join(ai_text[:3000].split())
     return message
 
 
