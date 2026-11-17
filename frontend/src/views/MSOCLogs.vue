@@ -30,7 +30,7 @@
         :loading="loading"
         :pagination="false"
         :row-key="r=>r.id"
-        :scroll-x="1150"
+        :scroll-x="1300"
       />
       <n-space justify="end" style="margin-top:14px">
         <n-pagination v-model:page="page" :page-size="size" :item-count="total" show-quick-jumper @update:page="load"/>
@@ -104,15 +104,9 @@ const columns=[
     title:'发送状态',key:'sent',width:110,
     render:r=>h(NTag,{type:r.sent?'success':'warning',bordered:false},()=>r.sent?'已发送':'未发送')
   },
-  {title:'尝试次数',key:'attempt_count',width:100},
   {
-    title:'发送错误',key:'last_error',width:240,
-    ellipsis:{tooltip:true},
-    render:r=>r.last_error||'—'
-  },
-  {
-    title:'内容预览',key:'content',ellipsis:{tooltip:true},width:300,
-    render:r=>h('span',r.content?.slice(0,180)||'')
+    title:'内容预览',key:'content',minWidth:750,
+    render:r=>h('div',{class:'msoc-content-preview'},r.content||'—')
   },
   {
     title:'操作',key:'action',width:100,
@@ -181,6 +175,7 @@ onMounted(load)
 </script>
 
 <style scoped>
-.page{max-width:1350px;margin:30px auto;padding:20px}
+.page{max-width:1700px;margin:30px auto;padding:20px}
+.msoc-content-preview{white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;line-height:1.55;max-height:none}
 .raw{white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto;background:#f5f7fa;padding:16px;border-radius:6px;font-size:13px}
 </style>
