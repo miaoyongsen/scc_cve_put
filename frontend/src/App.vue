@@ -47,8 +47,7 @@ const groups = [
     { label: 'MSOC推送配置', path: '/msoc-push-settings' }
   ] },
   { key: 'mail', label: '邮件推送', children: [
-    { label: '邮件推送列表', path: '/mail-tasks' },
-    { label: '邮件模版', path: '/mail-templates' }
+    { label: '邮件推送列表', path: '/mail-tasks' }
   ] },
   { key: 'common', label: '公共配置', children: [
     { label: 'AI配置', path: '/ai-settings' },
