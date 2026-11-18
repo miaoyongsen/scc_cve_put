@@ -59,6 +59,11 @@ async function manualPush(action){
     await axios.post('/api/v1/manual-cve/'+action,{cve:code},{headers:manualAuth(),timeout:60000})
     msg.success(action==='send'?'企业微信已确认发送成功':'已加入下次合并推送队列')
     showManualCve.value=false
+    // Show the saved record immediately, including medium/low manual CVEs.
+    q.value=code
+    severity.value=[]
+    source.value=''
+    page.value=1
     await load()
   }catch(e){msg.error(e.response?.data?.detail||e.message)}
   finally{manualSending.value=false}
