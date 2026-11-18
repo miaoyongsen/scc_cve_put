@@ -21,7 +21,6 @@ def local_db(monkeypatch):
     monkeypatch.setattr(core,"engine",local)
     monkeypatch.setattr(manual,"log_run",lambda *args,**kwargs:None)
     monkeypatch.setattr(notification_digest,"log_run",lambda *args,**kwargs:None)
-    monkeypatch.setattr(notifications,"mark_wecom_delivered",lambda items:None)
     monkeypatch.setattr(ai_config,"ai_enabled",lambda:False)
     manual._lookup_cache.clear()
     config={
@@ -72,6 +71,19 @@ def test_manual_lookup_then_queued_only_delivers_in_next_digest(local_db,monkeyp
     assert queued["data"]["status"]=="queued"
     assert sent==[]
     assert len(calls)==1  # the confirmation reused the previewed metadata
+    with Session(local_db) as db:
+        saved=db.scalar(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345"))
+        assert saved is not None
+        assert saved.title=="Example vulnerability in a server application."
+        assert saved.cve=="CVE-2026-12345"
+        assert saved.severity=="高危"
+        assert saved.source=="手动查询"
+        assert saved.wecom_sent is False
+        assert saved.pushed is False
+    # The new record is shown before the next digest, not hidden by reviews.
+    visible=core.list_vulnerabilities(q="CVE-2026-12345")["data"]["list"]
+    assert any(v["key"]=="manual-cve:CVE-2026-12345" for v in visible)
     with pytest.raises(HTTPException) as err:
         manual.queue_manual_cve(manual.CVEActionInput(cve="CVE-2026-12345"))
     assert err.value.status_code==409
@@ -89,6 +101,10 @@ def test_manual_lookup_then_queued_only_delivers_in_next_digest(local_db,monkeyp
         row=db.scalar(select(manual.ManualCVEQueue))
         assert row.status=="sent"
         assert row.sent_at is not None
+        saved=db.scalar(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345"))
+        assert saved.wecom_sent is True
+        assert saved.wecom_sent_at is not None
 
     sent.clear()
     token=notification_digest.begin_digest()
@@ -112,6 +128,12 @@ def test_manual_immediate_send_clears_an_existing_queue(local_db,monkeypatch):
     assert len(messages)==1
     assert "> **编号**：CVE-2026-12345" in messages[0]
     assert manual.pending_manual_entries()==[]
+    with Session(local_db) as db:
+        saved=db.scalar(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345"))
+        assert saved is not None and saved.wecom_sent is True
+        assert db.scalar(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345")) is saved
 
 
 def test_unknown_severity_cannot_be_pushed(local_db,monkeypatch):
@@ -130,3 +152,33 @@ def test_invalid_manual_cve_is_rejected(local_db):
     with pytest.raises(HTTPException) as err:
         manual.lookup_manual_cve("CVE-2026-notvalid")
     assert err.value.status_code==422
+
+
+def test_immediate_failure_still_persists_unsent_manual_cve(local_db,monkeypatch):
+    _mock_nvd(monkeypatch)
+    manual.lookup_manual_cve("CVE-2026-12345")
+    monkeypatch.setattr(notifications,"send_wecom_markdown",
+        lambda *args,**kwargs: False)
+    with pytest.raises(HTTPException) as error:
+        manual.send_manual_cve(manual.CVEActionInput(cve="CVE-2026-12345"))
+    assert error.value.status_code==502
+    with Session(local_db) as db:
+        saved=db.scalar(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345"))
+        assert saved is not None
+        assert saved.wecom_sent is False
+
+
+def test_repeat_manual_queue_updates_one_record_not_duplicates(local_db,monkeypatch):
+    _mock_nvd(monkeypatch)
+    manual.lookup_manual_cve("CVE-2026-12345")
+    manual.queue_manual_cve(manual.CVEActionInput(cve="CVE-2026-12345"))
+    monkeypatch.setattr(notifications,"send_wecom_markdown",
+        lambda *args,**kwargs: True)
+    manual.send_manual_cve(manual.CVEActionInput(cve="CVE-2026-12345"))
+    manual.queue_manual_cve(manual.CVEActionInput(cve="CVE-2026-12345"))
+    with Session(local_db) as db:
+        records=db.scalars(select(core.Vulnerability).where(
+            core.Vulnerability.key=="manual-cve:CVE-2026-12345")).all()
+        assert len(records)==1
+        assert records[0].wecom_sent is False
