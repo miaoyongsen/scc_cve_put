@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import re
+import threading
+import time
 from datetime import datetime, timezone
 
 import httpx
@@ -19,6 +21,12 @@ router = APIRouter(prefix="/api/v1/manual-cve", dependencies=[Depends(auth)])
 CVE_FORMAT = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
 KNOWN_LEVELS = ("严重", "高危", "中危", "低危")
 LEVEL_PRIORITY = {"严重": 4, "高危": 3, "中危": 2, "低危": 1, "未知": 0}
+
+# Keep a successful lookup briefly so pressing a push button does not require
+# a second NVD HTTP request or unexpectedly change the previewed metadata.
+_lookup_lock=threading.Lock()
+_lookup_cache={}
+LOOKUP_TTL_SECONDS=900
 
 
 class ManualCVEQueue(Base):
@@ -124,9 +132,19 @@ def _nvd_item(cve):
 
 def resolve_cve(cve):
     """Use local records when complete; fall back to NVD for incomplete/missing CVEs."""
+    with _lookup_lock:
+        cached=_lookup_cache.get(cve)
+        if cached and cached[0]>time.monotonic():
+            return dict(cached[1])
     local=_db_item(cve)
     if local and local.get("title") and local.get("severity") in KNOWN_LEVELS:
-        return local
+        result=local
+    else:
+        result=None
+    if result is not None:
+        with _lookup_lock:
+            _lookup_cache[cve]=(time.monotonic()+LOOKUP_TTL_SECONDS,dict(result))
+        return result
     try:
         official=_nvd_item(cve)
     except HTTPException:
@@ -138,6 +156,8 @@ def resolve_cve(cve):
             official["title"]=local.get("title") or ""
         if official.get("severity")=="未知":
             official["severity"]=local.get("severity") or "未知"
+    with _lookup_lock:
+        _lookup_cache[cve]=(time.monotonic()+LOOKUP_TTL_SECONDS,dict(official))
     return official
 
 
