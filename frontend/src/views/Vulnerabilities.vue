@@ -34,7 +34,7 @@ import{list,detail,refresh}from'../api'
 import axios from 'axios'
 const router=useRouter(),msg=useMessage(),rows=ref([]),total=ref(0),loading=ref(false),refreshing=ref(false),page=ref(1),q=ref(''),severity=ref(["严重","高危"]),source=ref(''),show=ref(false),selected=ref(null)
 const showManualCve=ref(false),manualCve=ref(''),manualCveResult=ref(null),manualSearching=ref(false),manualSending=ref(false)
-const manualCveValid=computed(()=>/^CVE-\\d{4}-\\d{4,}$/i.test(manualCve.value.trim()))
+const manualCveValid=computed(()=>/^CVE-\d{4}-\d{4,}$/i.test(manualCve.value.trim()))
 const manualCveReady=computed(()=>!!manualCveResult.value?.ready && manualCveResult.value.cve===manualCve.value.trim().toUpperCase() && !manualSearching.value && !manualSending.value)
 const manualAuth=()=>({Authorization:'Bearer '+(localStorage.getItem('token')||'')})
 function openManualCve(){manualCve.value='';manualCveResult.value=null;showManualCve.value=true}
