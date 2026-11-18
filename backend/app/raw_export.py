@@ -9,16 +9,16 @@ from xml.sax.saxutils import escape
 import re
 
 HEADERS = [
-    "序号", "运行编号", "来源", "采集方式", "内容类型", "CVE",
-    "标题", "当前等级", "原始等级", "披露时间", "原始链接",
-    "处理结果", "过滤原因", "描述", "修复建议", "原始JSON",
+    "序号", "运行编号", "来源", "采集方式", "内容类型", "采集器CVE",
+    "正文识别的全部CVE", "CVE差异提醒", "标题", "当前等级", "原始等级",
+    "披露时间", "原始链接", "处理结果", "过滤原因", "描述", "修复建议", "原始JSON",
 ]
 COLUMNS = [
     "id", "run_id", "source", "source_type", "content_type", "cve",
     "title", "severity", "original_severity", "disclosure", "url",
     "outcome", "reason", "description", "solutions", "payload",
 ]
-WIDTHS = [10, 12, 25, 15, 15, 23, 65, 15, 15, 23, 60, 22, 40, 85, 70, 90]
+WIDTHS = [10, 12, 25, 15, 15, 23, 35, 19, 65, 15, 15, 23, 60, 22, 40, 85, 70, 90]
 MAX_EXCEL_CHARS = 32767
 MAX_ROWS_PER_SHEET = 1048575
 _INVALID_XML = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
@@ -66,7 +66,7 @@ def _sheet(rows, data_rows=True):
         output.append('</row>')
     output.append('</sheetData>')
     if data_rows:
-        output.append('<autoFilter ref="A1:P%d"/>' % max(1, len(rows)))
+        output.append('<autoFilter ref="A1:R%d"/>' % max(1, len(rows)))
     output.append('</worksheet>')
     return "".join(output).encode("utf-8")
 
@@ -74,8 +74,23 @@ def _sheet(rows, data_rows=True):
 def build_raw_collection_xlsx(records, run_id, mode):
     """One row for every parsed upstream result, including filtered results."""
     values = []
-    for record in records:
-        values.append([getattr(record, column, "") for column in COLUMNS])
+    for n, record in enumerate(records, 1):
+        data={column:getattr(record,column,"") for column in COLUMNS}
+        all_cves=[]
+        for value in (data["title"],data["description"],data["payload"]):
+            for match in re.findall(r"CVE-\d{4}-\d{4,}",str(value or ""),re.IGNORECASE):
+                value=match.upper()
+                if value not in all_cves:
+                    all_cves.append(value)
+        parsed={v.upper() for v in re.findall(r"CVE-\d{4}-\d{4,}",str(data["cve"] or ""),re.IGNORECASE)}
+        additional=[code for code in all_cves if code not in parsed]
+        hint=("需检查：" + ", ".join(additional)) if additional else ""
+        values.append([
+            n,data["run_id"],data["source"],data["source_type"],data["content_type"],
+            data["cve"],", ".join(all_cves),hint,data["title"],data["severity"],
+            data["original_severity"],data["disclosure"],data["url"],data["outcome"],
+            data["reason"],data["description"],data["solutions"],data["payload"],
+        ])
     sheets = []
     # Split only if the Excel worksheet row limit is reached.
     for start in range(0, len(values), MAX_ROWS_PER_SHEET):
@@ -93,7 +108,7 @@ def build_raw_collection_xlsx(records, run_id, mode):
         ["过滤前数据", "进入等级、关键词、日期及去重判断前持久化，包括过滤及重复记录。"],
         ["当前等级", "可能经过 NVD 等级补齐；原始等级保留首次接收时的值。"],
         ["处理结果", "记录当时规则判断；部分上游异常或处理失败的条目可能显示未处理。"],
-        ["CVE 校验", "可直接按 CVE、来源、等级、处理结果筛选。空 CVE 代表上游未提供/未解析。"],
+        ["CVE 校验", "采集器CVE与正文识别的全部CVE并列，CVE差异提醒提示同条情报中可能遗漏的其他CVE；须人工核实。"],
         ["不包含", "RSS 解析器跳过的无标题项目、源站未返回的项目以及未成功输出合法 JSON 的脚本。"],
         ["历史记录", "启用本功能以前的运行无法补回当时未保存的原始结果。"],
         ["Excel 限制", "单元格文本最多 32767 字符，超出部分在 Excel 中截断。"],
