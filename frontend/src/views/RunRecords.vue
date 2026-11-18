@@ -1,8 +1,8 @@
 <template>
 <div style="max-width:1200px;margin:28px auto;padding:20px">
 <n-space justify="space-between" align="center"><h2>采集运行记录</h2><n-button @click="load">刷新</n-button></n-space>
-<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看本次 RSS / Python 来源、HTTP 状态码、CVE 数量、重复内容、直接推送、等级未知待审核及实际推送结果。手动刷新和定时采集统一执行 RSS + Python 爬虫，生成一条汇总记录；单独运行爬虫仍独立记录。仅独立 Python 爬虫采集运行历史保留最近20次；RSS、统一采集及定时采集历史不受该条数限制。运行编号是数据库 ID，历史记录被清理后可能不连续。</n-alert>
-<div style="width:100%;overflow-x:auto"><n-data-table :columns="columns" :data="rows" :loading="loading" :pagination="false" :row-key="r=>r.id" :scroll-x="1135"/></div>
+<n-alert type="info" style="margin-bottom:14px">每次采集只显示一行，点击展开查看来源和处理记录；点击「下载原始记录」可获取本次所有来源在过滤前解析出的数据，含中低危、未知、关键词未命中和重复项，便于复核遗漏 CVE。手动刷新和定时采集统一执行 RSS + Python 爬虫，生成一条汇总记录；单独运行爬虫仍独立记录。仅独立 Python 爬虫采集运行历史保留最近20次；RSS、统一采集及定时采集历史不受该条数限制。运行编号是数据库 ID，历史记录被清理后可能不连续。</n-alert>
+<div style="width:100%;overflow-x:auto"><n-data-table :columns="columns" :data="rows" :loading="loading" :pagination="false" :row-key="r=>r.id" :scroll-x="1435"/></div>
 <n-space justify="space-between" align="center" style="margin-top:14px;flex-wrap:wrap"><n-text depth="3">实际保留 {{total}} 次运行记录，当前第 {{page}} / {{Math.max(1,Math.ceil(total/20))}} 页</n-text><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
 <n-modal v-model:show="visible" preset="card" title="本次运行详情" style="width:1000px;max-width:96vw">
 <n-space style="margin-bottom:12px"><n-tag>运行 #{{detail.id}}</n-tag><n-tag>{{detail.mode}}</n-tag><n-tag :type="detail.status==='完成'?'success':'warning'">{{detail.status}}</n-tag></n-space>
@@ -26,14 +26,37 @@ import {ref,h,onMounted} from 'vue'
 import axios from 'axios'
 import {NDataTable,NButton,NSpace,NPagination,NModal,NTag,NAlert,NCard,NCollapse,NCollapseItem,NEmpty,useMessage} from 'naive-ui'
 const msg=useMessage(),rows=ref([]),page=ref(1),total=ref(0),loading=ref(false),visible=ref(false),detail=ref({})
+const downloading=ref(null)
 const http=axios.create({baseURL:'/api/v1/collection-runs'})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
-const columns=[{title:'运行编号',key:'id',width:90},{title:'开始时间',key:'started_at',width:190,render:r=>bjTime(r.started_at)},{title:'采集类型',key:'mode',minWidth:160},{title:'来源数',key:'sources',width:80,render:r=>r.summary?.details?.length??0},{title:'采集总量',key:'items',width:90,render:r=>r.summary?.items??(r.summary?.details||[]).reduce((a,x)=>a+(x.count??x.items??0),0)},{title:'直接处理',key:'direct',width:90,render:r=>r.summary?.direct??(r.summary?.details||[]).reduce((a,x)=>a+(x.direct??x.primary??0),0)},{title:'重复',key:'duplicates',width:75,render:r=>(r.summary?.details||[]).reduce((a,x)=>a+(x.duplicate_count??x.duplicates?.length??0),0)},{title:'待审核',key:'review_count',width:80,render:r=>r.summary?.review_count??(r.summary?.details||[]).reduce((a,x)=>a+(x.review_count??x.secondary??x.pending?.length??0),0)},{title:'状态',key:'status',width:90},{title:'操作',key:'action',width:90,render:r=>h(NButton,{type:'primary',text:true,onClick:()=>open(r)},()=> '展开详情')}]
+const columns=[{title:'运行编号',key:'id',width:90},{title:'开始时间',key:'started_at',width:190,render:r=>bjTime(r.started_at)},{title:'采集类型',key:'mode',minWidth:160},{title:'来源数',key:'sources',width:80,render:r=>r.summary?.details?.length??0},{title:'采集总量',key:'items',width:90,render:r=>r.summary?.items??(r.summary?.details||[]).reduce((a,x)=>a+(x.count??x.items??0),0)},{title:'直接处理',key:'direct',width:90,render:r=>r.summary?.direct??(r.summary?.details||[]).reduce((a,x)=>a+(x.direct??x.primary??0),0)},{title:'重复',key:'duplicates',width:75,render:r=>(r.summary?.details||[]).reduce((a,x)=>a+(x.duplicate_count??x.duplicates?.length??0),0)},{title:'待审核',key:'review_count',width:80,render:r=>r.summary?.review_count??(r.summary?.details||[]).reduce((a,x)=>a+(x.review_count??x.secondary??x.pending?.length??0),0)},{title:'状态',key:'status',width:90},{title:'原始数据',key:'raw_count',width:95,render:r=>r.raw_count??0},{title:'下载原始记录',key:'raw_download',width:140,render:r=>h(NButton,{type:'primary',text:true,disabled:!(r.raw_count>0),loading:downloading.value===r.id,onClick:()=>downloadRaw(r)},()=>r.raw_count>0?'下载 Excel':'无原始快照')},{title:'操作',key:'action',width:90,render:r=>h(NButton,{type:'primary',text:true,onClick:()=>open(r)},()=> '展开详情')}]
 const bjTime=value=>{if(!value)return '—';const raw=String(value);const normalized=/[zZ]$|[+-]\\d{2}:\\d{2}$/.test(raw)?raw:raw.replace(' ','T')+'Z';const d=new Date(normalized);return Number.isNaN(d.getTime())?raw:new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(d)}
 const tierLabel=x=>({direct:'直接处理',review:'等级未知审核',primary:'直接处理',secondary:'历史人工审核',article:'文章'})[x]||x||'-'
 const itemColumns=[{title:'来源',key:'source',width:130},{title:'处理方式',key:'tier',width:90,render:r=>tierLabel(r.tier)},{title:'标题',key:'title',ellipsis:{tooltip:true},render:r=>r.url?h('a',{href:r.url,target:'_blank',rel:'noopener noreferrer'},r.title):r.title},{title:'CVE',key:'cve',width:160},{title:'处理结果',key:'status',width:110},{title:'说明',key:'detail',width:180,ellipsis:{tooltip:true}}]
 async function load(){loading.value=true;try{let d=(await http.get('',{params:{page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('',{params:{page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
 function changePage(next){page.value=next;load()}
+async function downloadRaw(r){
+  if(!r.raw_count || downloading.value!==null)return
+  downloading.value=r.id
+  try{
+    const response=await http.get('/'+r.id+'/raw.xlsx',{responseType:'blob',timeout:120000})
+    const blob=new Blob([response.data],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
+    const url=URL.createObjectURL(blob)
+    const a=document.createElement('a')
+    a.href=url
+    a.download='collection_raw_'+r.id+'.xlsx'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }catch(e){
+    let reason=e.response?.data?.detail||e.message
+    if(e.response?.data instanceof Blob){
+      try{reason=JSON.parse(await e.response.data.text()).detail||reason}catch(_){}
+    }
+    msg.error('下载失败：'+reason)
+  }finally{downloading.value=null}
+}
 async function open(r){try{detail.value=(await http.get('/'+r.id)).data.data;visible.value=true}catch(e){msg.error(e.response?.data?.detail||e.message)}}
 onMounted(load)
 </script>
