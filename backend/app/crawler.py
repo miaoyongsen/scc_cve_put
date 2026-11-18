@@ -184,12 +184,17 @@ def _collect_script(script_id:int):
     for item_index,item in enumerate(result["items"]):
         source=(item.get("source") or "").strip() or script_name
         item={**item,"source":source}
+        from .core import record_raw_item, update_raw_item
+        raw_id=record_raw_item(item,source_type="Python",content_type=content_type,run_id=run_id)
         if content_type=="vulnerability" and item.get("severity")=="未知" and item.get("cve"):
             from .collector import nvd_severity
             with Session(engine) as check_db:
                 known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
             if not known:item["severity"]=nvd_severity(item["cve"])
         tier,keyword,rejected=evaluate(item) if content_type=="vulnerability" else ("article",None,None)
+        update_raw_item(raw_id,severity=item.get("severity"),
+                        outcome=("过滤："+rejected if rejected else ("安全文章" if tier=="article" else ("直接处理" if tier=="direct" else "待人工审核"))),
+                        reason=(rejected or keyword or ""))
         if rejected:
             filtered+=1
             continue
@@ -231,6 +236,7 @@ def _collect_script(script_id:int):
                     reject_reason="发布时间格式无效："+str(exc)[:180]
                     event["status"]="发布时间无效，跳过"
             if reject_reason:
+                update_raw_item(raw_id,outcome=event["status"],reason=reject_reason)
                 event["detail"]=reject_reason
                 filtered+=1
                 log_run(normalized,"article",event["status"],reject_reason,run_id=run_id)
@@ -268,6 +274,8 @@ def _collect_script(script_id:int):
                 db.add(Review(vulnerability_id=vuln.id,status="pending",matched_keyword=keyword or "待人工确认"))
                 db.commit()
                 notify=False
+        if old is not None or existing_key is not None:
+            update_raw_item(raw_id,outcome="重复",reason="相同 URL 或已有漏洞记录")
         if tier=="direct":
             direct+=1
         elif tier=="review":
@@ -276,12 +284,14 @@ def _collect_script(script_id:int):
 
         if content_type in ("article","article_review"):
             if article_duplicate:
+                update_raw_item(raw_id,outcome="重复",reason="相同脚本下 URL 已采集")
                 event["status"]="重复跳过"
                 event["detail"]="重复文章：相同脚本下 URL 已采集，本次不重复推送"
                 log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
                 events.append(event)
                 continue
             if not notify:
+                update_raw_item(raw_id,outcome="未推送",reason="文章没有触发新增通知")
                 event["status"]="未推送"
                 event["detail"]="文章记录已存在且内容未触发新增通知"
                 log_run(normalized,"article",event["status"],event["detail"],run_id=run_id)
