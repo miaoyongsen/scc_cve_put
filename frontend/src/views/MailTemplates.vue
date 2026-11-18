@@ -8,7 +8,7 @@
         <n-form-item label="模版名称"><n-input v-model:value="form.name" placeholder="例如：CTI安全预警"/></n-form-item>
         <n-form-item label="模版编号"><n-input v-model:value="form.template_code" placeholder="cve_alert_en"/></n-form-item>
         <n-form-item label="Power Automate HTTP 触发器地址"><n-input v-model:value="form.flow_url" type="password" show-password-on="click" :placeholder="editing?'留空保留已保存地址':'https://...'" /></n-form-item>
-        <n-form-item label="关联 Skill"><n-select v-model:value="form.skill_id" :options="skillOptions"/></n-form-item>
+        <n-alert type="info">AI 调用使用的 Skill 请在公共配置 → Skill配置中关联。</n-alert>
         <n-form-item label="AI生成规范（补充要求，选填）"><n-input v-model:value="form.ai_prompt" type="textarea" :rows="6" placeholder="英文输出；版本范围及修复版本必须基于提供的资料，不得编造"/></n-form-item>
         <n-alert type="info">邮件排版由微软流负责。SCC 使用固定 CTI JSON 字段，包括产品数组和参考链接数组。</n-alert>
       </n-form>
@@ -28,7 +28,7 @@ const msg=useMessage(),rows=ref([]),q=ref(''),loading=ref(false),saving=ref(fals
 const skills=ref([])
 const skillOptions=computed(()=>[{label:'不使用 Skill（默认规范）',value:0},...skills.value.map(x=>({label:x.name,value:x.id}))])
 const skillName=id=>skillOptions.value.find(x=>x.value===id)?.label||'未关联'
-const blank=()=>({name:'',subject:'',body:'',template_code:'cve_alert_en',flow_url:'',ai_prompt:'',skill_id:0})
+const blank=()=>({name:'',subject:'',body:'',template_code:'cve_alert_en',flow_url:'',ai_prompt:''})
 const form=ref(blank())
 const ready=computed(()=>!!form.value.name.trim() && !!form.value.template_code.trim())
 const http=axios.create({baseURL:'/api/v1/mail/templates'})
@@ -46,7 +46,7 @@ const columns=[
   ])}
 ]
 async function load(){loading.value=true;try{rows.value=(await http.get('',{params:{q:q.value}})).data.data;skills.value=(await http.get('/api/v1/settings/ai/skills',{baseURL:''})).data.data}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
-function open(r){editing.value=r?.id??null;form.value=r?{...blank(),name:r.name,subject:r.subject,body:r.body,template_code:r.template_code,ai_prompt:r.ai_prompt,skill_id:r.skill_id||0}:blank();visible.value=true}
+function open(r){editing.value=r?.id??null;form.value=r?{...blank(),name:r.name,subject:r.subject,body:r.body,template_code:r.template_code,ai_prompt:r.ai_prompt}:blank();visible.value=true}
 async function save(){if(!ready.value||saving.value)return;saving.value=true;try{if(editing.value)await http.put('/'+editing.value,form.value);else await http.post('',form.value);visible.value=false;msg.success('模版已保存');await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{saving.value=false}}
 async function remove(r){if(!confirm('确认删除模版 '+r.name+'？已有任务的邮件内容不会改变。'))return;try{await http.delete('/'+r.id);msg.success('已删除');await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}}
 onMounted(load)
