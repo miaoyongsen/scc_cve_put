@@ -132,6 +132,9 @@ def build_raw_collection_xlsx(records, run_id, mode):
         relations.append('<Relationship Id="rId%d" '
             'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
             'Target="worksheets/sheet%d.xml"/>' % (i, i))
+    relations.append('<Relationship Id="rId%d" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+        'Target="styles.xml"/>' % (len(sheets) + 1))
     relations.append('</Relationships>')
     content_types = [
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
