@@ -631,6 +631,9 @@ app.include_router(dashboard_router)
 from .msoc_monitor import router as msoc_router
 app.include_router(msoc_router)
 
+from .mail_tasks import router as mail_router
+app.include_router(mail_router)
+
 @app.get("/api/v1/scheduler/status",dependencies=[Depends(auth)])
 def get_scheduler_status():
     from .scheduler import scheduler_status
