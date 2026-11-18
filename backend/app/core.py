@@ -74,6 +74,27 @@ class RunRecord(Base):
     url: Mapped[str]=mapped_column(Text,default="")
     run_id: Mapped[int]=mapped_column(Integer,nullable=True,index=True)
 
+class RawCollectionItem(Base):
+    """One parsed upstream item before keyword, severity and time filters."""
+    __tablename__="raw_collection_items"
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    run_id: Mapped[int]=mapped_column(Integer,index=True,nullable=False)
+    source: Mapped[str]=mapped_column(String(120),default="")
+    source_type: Mapped[str]=mapped_column(String(20),default="")
+    content_type: Mapped[str]=mapped_column(String(30),default="vulnerability")
+    title: Mapped[str]=mapped_column(Text,default="")
+    cve: Mapped[str]=mapped_column(Text,default="")
+    severity: Mapped[str]=mapped_column(String(30),default="")
+    original_severity: Mapped[str]=mapped_column(String(30),default="")
+    disclosure: Mapped[str]=mapped_column(Text,default="")
+    url: Mapped[str]=mapped_column(Text,default="")
+    description: Mapped[str]=mapped_column(Text,default="")
+    solutions: Mapped[str]=mapped_column(Text,default="")
+    payload: Mapped[str]=mapped_column(Text,default="{}")
+    outcome: Mapped[str]=mapped_column(String(80),default="未处理")
+    reason: Mapped[str]=mapped_column(Text,default="")
+
+
 class CollectionRun(Base):
     __tablename__="collection_runs"
     id: Mapped[int]=mapped_column(Integer,primary_key=True)
@@ -85,6 +106,53 @@ class CollectionRun(Base):
 
 from contextvars import ContextVar
 _active_run=ContextVar("collection_run_id",default=None)
+
+def record_raw_item(item, source_type="", content_type="vulnerability", run_id=None):
+    """Persist each parsed upstream result before any eligibility filters.
+
+    A separate session makes these audit snapshots durable even when a source
+    later fails, or the normal vulnerability upsert is rejected.
+    """
+    import json
+    active_id=run_id if run_id is not None else _active_run.get()
+    if active_id is None:
+        return None
+    refs=item.get("references") or []
+    url=item.get("url") or (refs[0] if isinstance(refs,list) and refs else "")
+    cve=item.get("cve") or ""
+    original_severity=str(item.get("severity") or "未知")
+    with Session(engine) as db:
+        row=RawCollectionItem(
+            run_id=active_id,
+            source=str(item.get("from") or item.get("source") or "")[:120],
+            source_type=source_type,
+            content_type=content_type,
+            title=str(item.get("title") or ""),
+            cve=", ".join(map(str,cve)) if isinstance(cve,list) else str(cve),
+            severity=original_severity,original_severity=original_severity,
+            disclosure=str(item.get("disclosure") or ""),
+            url=str(url or ""),
+            description=str(item.get("description") or ""),
+            solutions=str(item.get("solutions") or ""),
+            payload=json.dumps(item,ensure_ascii=False,default=str),
+        )
+        db.add(row)
+        db.commit()
+        return row.id
+
+
+def update_raw_item(record_id, *, severity=None, outcome=None, reason=None):
+    if record_id is None:
+        return
+    with Session(engine) as db:
+        row=db.get(RawCollectionItem,record_id)
+        if row is None:
+            return
+        if severity is not None:row.severity=str(severity)
+        if outcome is not None:row.outcome=str(outcome)[:80]
+        if reason is not None:row.reason=str(reason)
+        db.commit()
+
 
 def begin_run(mode):
     with Session(engine) as db:
@@ -121,6 +189,7 @@ def prune_collection_run_history(keep=CRAWLER_RUN_HISTORY_LIMIT):
         for pos in range(0,len(expired_ids),300):
             ids=expired_ids[pos:pos+300]
             db.execute(delete(RunRecord).where(RunRecord.run_id.in_(ids)))
+            db.execute(delete(RawCollectionItem).where(RawCollectionItem.run_id.in_(ids)))
             count+=db.execute(delete(CollectionRun).where(CollectionRun.id.in_(ids))).rowcount or 0
         db.commit()
         return count
@@ -223,6 +292,27 @@ def collection_runs(page:int=1,size:int=20):
             "id":r.id,"started_at":r.started_at,"ended_at":r.ended_at,
             "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}")
         } for r in runs]}}
+
+@app.get("/api/v1/collection-runs/{run_id}/raw.xlsx",dependencies=[Depends(auth)])
+def download_collection_raw_xlsx(run_id:int):
+    from .raw_export import build_raw_collection_xlsx
+    from fastapi.responses import StreamingResponse
+    import io
+    with Session(engine) as db:
+        run=db.get(CollectionRun,run_id)
+        if run is None:
+            raise HTTPException(404,"运行记录不存在")
+        count=db.scalar(select(func.count()).select_from(RawCollectionItem).where(RawCollectionItem.run_id==run_id)) or 0
+        if count==0:
+            raise HTTPException(404,"本次运行没有保存原始采集数据（历史记录无法回溯）")
+        raw_rows=db.scalars(select(RawCollectionItem).where(
+            RawCollectionItem.run_id==run_id).order_by(RawCollectionItem.id)).all()
+        result=build_raw_collection_xlsx(raw_rows,run_id,run.mode)
+    return StreamingResponse(io.BytesIO(result),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":f'attachment; filename="collection_raw_{run_id}.xlsx"',
+                 "Cache-Control":"no-store"})
+
 
 @app.get("/api/v1/collection-runs/{run_id}",dependencies=[Depends(auth)])
 def collection_run_detail(run_id:int):
