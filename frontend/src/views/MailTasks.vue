@@ -1,15 +1,16 @@
 <template>
 <div class="mail-page">
-  <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-button type="primary" @click="open()">创建任务</n-button></n-space>
+  <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-space><n-button @click="openSettings">AI配置</n-button><n-button type="primary" @click="open()">创建任务</n-button></n-space></n-space>
+  <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.has_flow_url?'success':'warning'">微软流：{{settings.has_flow_url?"已配置":"未配置"}}</n-tag></n-space>
   <n-space style="margin:16px 0"><n-input v-model:value="q" clearable placeholder="搜索任务 / CVE / 邮件主题 / 收件人" @keyup.enter="search"/><n-button @click="search">查询</n-button></n-space>
   <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1350"/>
   <n-space justify="end" style="margin-top:16px"><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
   <n-modal v-model:show="visible" preset="card" :title="editing?'编辑邮件任务':'创建邮件任务'" style="width:min(1150px,96vw);max-height:94vh;overflow:auto" :mask-closable="false" :closable="!busy">
     <n-form label-placement="top" :disabled="busy">
       <n-form-item label="任务名称（选填，默认使用漏洞标题）"><n-input v-model:value="form.name"/></n-form-item>
-      <n-form-item label="邮件模版"><n-select v-model:value="form.template_id" :options="templateOptions" placeholder="选择模版" clearable/></n-form-item>
+      <n-form-item label="当前 AI Skill"><n-tag type="info">{{settings.skill_name||"未选择"}}</n-tag></n-form-item>
       <n-form-item label="CVE 编号">
-        <n-space align="center" style="width:100%"><n-input v-model:value="form.data.cve_id" placeholder="CVE-2026-12345" style="width:min(340px,60vw)"/><n-button type="info" :loading="generating" :disabled="!validCve||busy" @click="generate">AI 自动填充</n-button></n-space>
+        <n-space align="center" style="width:100%"><n-input v-model:value="form.data.cve_id" placeholder="CVE-2026-12345" style="width:min(340px,60vw)"/><n-button type="info" :loading="generating" :disabled="!validCve||busy||!settings.skill_id" @click="generate">AI 自动填充</n-button></n-space>
       </n-form-item>
       <n-form-item label="补充情报资料（AI生成时使用，选填）"><n-input v-model:value="evidence" type="textarea" :rows="2" placeholder="粘贴厂商公告正文、准确版本范围、修复信息等；AI不会自动读取链接网页"/></n-form-item>
       <n-alert type="info" style="margin-bottom:16px">AI为可选辅助功能；所有内容均可人工填写或微调。发送前请核实影响版本、升级版本和官方链接。</n-alert>
@@ -33,6 +34,15 @@
       <n-button :disabled="busy" @click="visible=false">取消</n-button><n-button :disabled="busy" :loading="saving" @click="save(false)">保存草稿</n-button><n-button :disabled="busy" @click="previewOpen=true">邮件预览</n-button><n-button type="primary" :disabled="busy||!ready" :loading="sending" @click="save(true)">确认发送</n-button>
     </n-space>
   </n-modal>
+  <n-modal v-model:show="settingsOpen" preset="card" title="邮件 AI 配置" style="width:min(650px,95vw)" :mask-closable="false">
+    <n-form label-placement="top">
+      <n-form-item label="邮件 AI 使用的 Skill"><n-select v-model:value="settingsForm.skill_id" :options="skillOptions" placeholder="选择 Skill"/></n-form-item>
+      <n-alert type="info" style="margin-bottom:16px">保存后，所有新建或编辑邮件任务的 AI 自动填充均使用此 Skill，无需每次选择。Skill 内容在公共配置中维护。</n-alert>
+      <n-form-item label="Power Automate HTTP 触发器地址"><n-input v-model:value="settingsForm.flow_url" type="password" show-password-on="click" placeholder="留空保留已保存地址"/></n-form-item>
+      <n-form-item label="微软流模板标识（固定）"><n-input v-model:value="settingsForm.template_code"/></n-form-item>
+      <n-space justify="end"><n-button @click="settingsOpen=false">取消</n-button><n-button type="primary" :loading="settingsSaving" @click="saveSettings">保存配置</n-button></n-space>
+    </n-form>
+  </n-modal>
   <n-modal v-model:show="previewOpen" preset="card" title="邮件预览（最终排版以微软流为准）" style="width:min(1000px,95vw);max-height:93vh;overflow:auto">
     <div class="preview"><p class="muted">邮件主题</p><h3>{{subject}}</h3><hr/><p>Dear All,</p><p>According to the official security advisory, <span class="red">{{form.data.vulnerability_summary}}</span></p><p>System owners are requested to promptly check their usage and complete the upgrade as soon as possible.</p>
       <h3>1. Affected Products and Remediation</h3><div class="table-wrap"><table><thead><tr><th>Product</th><th>Affected Version</th><th>Upgrade Version</th><th>Vulnerability Impact</th></tr></thead><tbody><tr v-for="(p,i) in form.data.affected_products" :key="i"><td>{{p.product}}</td><td>{{p.affected_version}}</td><td>{{p.upgrade_version}}</td><td>{{p.vulnerability_impact}}</td></tr></tbody></table></div>
@@ -49,18 +59,21 @@
 import {ref,computed,h,onMounted} from 'vue'
 import axios from 'axios'
 import {NAlert,NButton,NDataTable,NDescriptions,NDescriptionsItem,NDynamicTags,NForm,NFormItem,NInput,NModal,NPagination,NSelect,NSpace,NTag,useMessage} from 'naive-ui'
-const msg=useMessage(),rows=ref([]),q=ref(''),page=ref(1),total=ref(0),loading=ref(false),saving=ref(false),sending=ref(false),generating=ref(false),visible=ref(false),detailOpen=ref(false),previewOpen=ref(false),detail=ref({}),templates=ref([]),editing=ref(null),evidence=ref(''),to=ref([]),cc=ref([])
+const msg=useMessage(),rows=ref([]),q=ref(''),page=ref(1),total=ref(0),loading=ref(false),saving=ref(false),sending=ref(false),generating=ref(false),visible=ref(false),detailOpen=ref(false),previewOpen=ref(false),detail=ref({}),editing=ref(null),evidence=ref(''),to=ref([]),cc=ref([])
 const product=()=>({product:'',affected_version:'',upgrade_version:'',vulnerability_impact:''})
 const reference=()=>({name:'',url:''})
 const blankData=()=>({cve_id:'',severity:'',title:'',vulnerability_summary:'',affected_products:[product()],upgrade_recommendation:'',required_actions:'',references:[reference()]})
-const blank=()=>({name:'',template_id:null,data:blankData()})
+const blank=()=>({name:'',data:blankData()})
 const form=ref(blank())
 const levels=['Critical','High','Medium','Low','Unknown'].map(v=>({label:v,value:v}))
 const validCve=computed(()=>/^CVE-\d{4}-\d{4,}$/i.test(form.value.data.cve_id.trim()))
 const busy=computed(()=>saving.value||sending.value||generating.value)
 const subject=computed(()=> '['+form.value.data.severity+' Security Alert] '+form.value.data.title+' ('+form.value.data.cve_id+')')
-const templateOptions=computed(()=>templates.value.map(r=>({label:r.name+(r.has_flow_url?'':'（未配置Flow）'),value:r.id})))
-const ready=computed(()=>validCve.value && templates.value.some(t=>t.id===form.value.template_id&&t.has_flow_url) && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
+const settings=ref({skill_id:0,skill_name:'未选择',has_flow_url:false,template_code:'cve_alert_en'})
+const settingsOpen=ref(false),settingsSaving=ref(false),skills=ref([])
+const settingsForm=ref({skill_id:0,flow_url:'',template_code:'cve_alert_en'})
+const skillOptions=computed(()=>[{label:'未选择（仅人工填写）',value:0},...skills.value.map(r=>({label:r.name,value:r.id}))])
+const ready=computed(()=>validCve.value && settings.value.has_flow_url && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
 const http=axios.create({baseURL:'/api/v1/mail',timeout:120000})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
 const time=v=>v?new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z').toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'
@@ -74,8 +87,8 @@ async function load(){loading.value=true;try{let d=(await http.get('/tasks',{par
 function search(){page.value=1;load()}
 function changePage(v){page.value=v;load()}
 function split(v){return (v||'').split(/[,;\s，；]+/).filter(Boolean)}
-async function open(r){if(busy.value)return;editing.value=r?.id??null;evidence.value='';form.value=blank();to.value=[];cc.value=[];templates.value=[];if(r){form.value.name=r.name;form.value.template_id=r.template_id;form.value.data=r.data?JSON.parse(JSON.stringify(r.data)):{...blankData(),cve_id:r.cve||'',title:r.subject||'',vulnerability_summary:r.body||''};to.value=split(r.recipients);cc.value=split(r.cc)}visible.value=true;try{templates.value=(await http.get('/templates')).data.data}catch(e){msg.error('读取邮件模版失败')}}
-async function generate(){if(!validCve.value||busy.value)return;if(!confirm('AI生成结果将填充并替换当前情报字段，是否继续？'))return;generating.value=true;try{const data=(await http.post('/generate',{cve:form.value.data.cve_id,template_id:form.value.template_id,evidence:evidence.value})).data.data;form.value.data=data;msg.success('AI已填充，请人工核实和修改')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{generating.value=false}}
+async function open(r){if(busy.value)return;editing.value=r?.id??null;evidence.value='';form.value=blank();to.value=[];cc.value=[];if(r){form.value.name=r.name;form.value.data=r.data?JSON.parse(JSON.stringify(r.data)):{...blankData(),cve_id:r.cve||'',title:r.subject||'',vulnerability_summary:r.body||''};to.value=split(r.recipients);cc.value=split(r.cc)}visible.value=true;await loadSettings()}
+async function generate(){if(!validCve.value||busy.value)return;if(!confirm('AI生成结果将填充并替换当前情报字段，是否继续？'))return;generating.value=true;try{const data=(await http.post('/generate',{cve:form.value.data.cve_id,evidence:evidence.value})).data.data;form.value.data=data;msg.success('AI已填充，请人工核实和修改')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{generating.value=false}}
 async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!confirm('确认向 '+to.value.join('; ')+' 发送该邮件？'))return;saving.value=true;try{
   const payload={...form.value,recipients:to.value.join(';'),cc:cc.value.join(';')};
   const response=editing.value?await http.put('/drafts/'+editing.value,payload):await http.post('/drafts',payload);
@@ -86,7 +99,10 @@ async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!con
 }catch(e){msg.error(e.response?.data?.detail||e.message);await load()}finally{saving.value=false;sending.value=false}}
 async function view(r){try{detail.value=(await http.get('/tasks/'+r.id)).data.data;detailOpen.value=true}catch(e){msg.error(e.response?.data?.detail||e.message)}}
 async function remove(r){if(!confirm('确认删除任务 '+r.name+'？'))return;try{await http.delete('/tasks/'+r.id);msg.success('已删除');await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}}
-onMounted(load)
+async function loadSettings(){try{settings.value=(await http.get('/settings')).data.data}catch(e){msg.error('读取邮件配置失败：'+(e.response?.data?.detail||e.message))}}
+async function openSettings(){try{settings.value=(await http.get('/settings')).data.data;skills.value=(await http.get('/api/v1/settings/ai/skills',{baseURL:''})).data.data;settingsForm.value={skill_id:settings.value.skill_id,flow_url:'',template_code:settings.value.template_code};settingsOpen.value=true}catch(e){msg.error(e.response?.data?.detail||e.message)}}
+async function saveSettings(){if(settingsSaving.value)return;settingsSaving.value=true;try{settings.value=(await http.put('/settings',settingsForm.value)).data.data;settingsOpen.value=false;msg.success('邮件 AI 配置已保存')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{settingsSaving.value=false}}
+onMounted(()=>{load();loadSettings()})
 </script>
 <style scoped>
 .mail-page{box-sizing:border-box;margin:16px auto;width:calc(100% - 32px);background:#fff;border-radius:10px;padding:24px;min-width:0}
