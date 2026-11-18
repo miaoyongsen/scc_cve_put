@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import Integer, String, Text, inspect, text, DateTime, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from datetime import datetime, timezone
@@ -55,7 +55,6 @@ class SettingsInput(BaseModel):
     provider:str=""
     api_url:str=""
     system_prompt:str=""
-    active_skill:int=0
     api_key:str=""
     enabled:bool=False
 class SkillInput(BaseModel):
@@ -71,12 +70,45 @@ def get_settings():
 def save_settings(body:SettingsInput):
     with Session(engine) as db:
         row=db.get(AISettings,1)
-        if body.active_skill and not db.get(Skill,body.active_skill):raise HTTPException(422,"Skill 不存在")
         if not row:row=AISettings(id=1);db.add(row)
         for k,v in body.dict(exclude={"api_key"}).items():setattr(row,k,v)
         if body.api_key.strip():row.api_key=body.api_key.strip()
         db.commit()
     return {"code":0}
+class SkillBindingsInput(BaseModel):
+    cve_push: int=0
+    mail_templates: dict[str,int]=Field(default_factory=dict)
+
+@router.get("/skill-bindings")
+def get_skill_bindings():
+    from .mail_tasks import MailTemplate
+    with Session(engine) as db:
+        config=db.get(AISettings,1)
+        return {"code":0,"data":{"cve_push":config.active_skill if config else 0,
+            "mail_templates":[{"id":r.id,"name":r.name,"skill_id":r.skill_id}
+                              for r in db.query(MailTemplate).order_by(MailTemplate.id).all()]}}
+
+@router.put("/skill-bindings")
+def save_skill_bindings(body:SkillBindingsInput):
+    from .mail_tasks import MailTemplate
+    with Session(engine) as db:
+        templates=db.query(MailTemplate).all()
+        by_id={str(row.id):row for row in templates}
+        if set(body.mail_templates)!=set(by_id):
+            raise HTTPException(409,"邮件模版列表已变化，请刷新后重新配置")
+        for skill_id in [body.cve_push]+list(body.mail_templates.values()):
+            if skill_id<0 or (skill_id and not db.get(Skill,skill_id)):
+                raise HTTPException(422,"选择的 Skill 不存在")
+        config=db.get(AISettings,1)
+        if config is None:
+            config=AISettings(id=1)
+            db.add(config)
+        config.active_skill=body.cve_push
+        for key,skill_id in body.mail_templates.items():
+            by_id[key].skill_id=skill_id
+        db.commit()
+    return {"code":0}
+
 @router.get("/skills")
 def get_skills():
     with Session(engine) as db:
@@ -107,7 +139,7 @@ def remove_skill(skill_id:int):
         settings=db.get(AISettings,1)
         from .mail_tasks import MailTemplate
         if (settings and settings.active_skill==skill_id) or db.query(MailTemplate).filter_by(skill_id=skill_id).first():
-            raise HTTPException(409,"该 Skill 正在被 AI 配置或邮件模版使用，请先解除关联")
+            raise HTTPException(409,"该 Skill 正在被业务调用，请先在 Skill 配置中解除关联")
         db.delete(row);db.commit()
     return {"code":0}
 def compose_skill_prompt(base, skill):
