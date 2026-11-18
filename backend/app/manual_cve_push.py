@@ -194,7 +194,8 @@ def _persist_manual_vulnerability(db, item):
     row.title=str(item.get("title") or "")[:500]
     row.description=str(item.get("description") or "")
     row.severity=item["severity"]
-    row.disclosure=str(item.get("disclosure") or "")[:20]
+    # SQLite disclosure column is 20 characters; retain a valid ISO second value.
+    row.disclosure=str(item.get("disclosure") or "")[:19]
     row.solutions=str(item.get("solutions") or "")
     references=item.get("references") or ([item["url"]] if item.get("url") else [])
     row.references=json.dumps(references,ensure_ascii=False)
