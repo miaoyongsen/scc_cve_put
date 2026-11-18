@@ -178,6 +178,36 @@ def _prepared_item(cve):
     return item
 
 
+def _persist_manual_vulnerability(db, item):
+    """Upsert one user-requested CVE in the visible vulnerability monitor.
+
+    This is independent of the review workflow: queued manual CVEs must be
+    visible immediately, with wecom_sent=False until delivery succeeds.
+    """
+    cve=item["cve"]
+    key="manual-cve:"+cve
+    row=db.scalar(select(Vulnerability).where(Vulnerability.key==key))
+    if row is None:
+        row=Vulnerability(key=key)
+        db.add(row)
+    row.cve=cve
+    row.title=str(item.get("title") or "")[:500]
+    row.description=str(item.get("description") or "")
+    row.severity=item["severity"]
+    row.disclosure=str(item.get("disclosure") or "")[:20]
+    row.solutions=str(item.get("solutions") or "")
+    references=item.get("references") or ([item["url"]] if item.get("url") else [])
+    row.references=json.dumps(references,ensure_ascii=False)
+    row.source="手动查询"
+    row.content_type="vulnerability"
+    row.wecom_sent=False
+    row.wecom_sent_at=None
+    row.pushed=False
+    row.last_seen=datetime.now(timezone.utc)
+    db.flush()
+    return row
+
+
 @router.get("/lookup")
 def lookup_manual_cve(cve: str):
     code=_validate_cve(cve)
@@ -200,6 +230,7 @@ def queue_manual_cve(body: CVEActionInput):
         row=db.scalar(select(ManualCVEQueue).where(ManualCVEQueue.cve==cve))
         if row and row.status=="queued":
             raise HTTPException(409, "该 CVE 已在等待合并推送队列中")
+        _persist_manual_vulnerability(db,item)
         if row is None:
             row=ManualCVEQueue(cve=cve,item_json=json.dumps(item,ensure_ascii=False,default=str))
             db.add(row)
@@ -248,8 +279,13 @@ def send_manual_cve(body: CVEActionInput):
     webhook=(config["wecom_webhook"] if config["wecom_enabled"] else "") or os.getenv("WECHAT_WEBHOOK_URL","").strip()
     if not webhook:
         raise HTTPException(422,"未配置有效的企业微信机器人")
+    # Persist at the moment the user confirms, not after network delivery.
+    # A failed WeCom attempt stays visible with its unsent state.
+    with Session(engine) as db:
+        _persist_manual_vulnerability(db,item)
+        db.commit()
     from .legacy_notify import format_wecom_with_ai
-    from .notifications import send_wecom_markdown
+    from .notifications import send_wecom_markdown, mark_wecom_delivered
     message=format_wecom_with_ai(item)
     try:
         success=send_wecom_markdown(message,url=webhook)
@@ -259,6 +295,7 @@ def send_manual_cve(body: CVEActionInput):
     if not success:
         log_run(item,"manual","推送失败","企业微信未确认发送成功")
         raise HTTPException(502,"企业微信未确认发送成功")
+    mark_wecom_delivered([item])
     # If the same CVE was previously queued, suppress its next automatic resend.
     confirm_manual_delivery([item])
     log_run(item,"manual","推送成功","手动 CVE 立即推送")
