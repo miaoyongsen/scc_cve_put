@@ -51,7 +51,8 @@ const groups = [
     { label: '邮件模版', path: '/mail-templates' }
   ] },
   { key: 'common', label: '公共配置', children: [
-    { label: 'AI配置', path: '/ai-settings' }
+    { label: 'AI配置', path: '/ai-settings' },
+    { label: 'Skill配置', path: '/skill-settings' }
   ] }
 ]
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches
@@ -72,7 +73,6 @@ watch(() => route.path, path => {
 }, { immediate: true })
 const currentLabel = computed(() => {
   if (route.path === '/dashboard') return '运行看板'
-  if (route.path === '/skill-settings') return '公共配置 / AI配置 / Skill 配置'
   for (const group of groups) {
     const child = group.children.find(item => item.path === route.path)
     if (child) return group.label + ' / ' + child.label
