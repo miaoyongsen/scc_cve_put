@@ -46,13 +46,17 @@ const groups = [
     { label: 'MSOC日志', path: '/msoc-logs' },
     { label: 'MSOC推送配置', path: '/msoc-push-settings' }
   ] },
+  { key: 'mail', label: '邮件推送', children: [
+    { label: '邮件推送列表', path: '/mail-tasks' },
+    { label: '邮件模版', path: '/mail-templates' }
+  ] },
   { key: 'common', label: '公共配置', children: [
     { label: 'AI配置', path: '/ai-settings' }
   ] }
 ]
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches
 const sidebarOpen = ref(!isMobile() && localStorage.getItem('scc-sidebar-open') !== 'false')
-const expanded = reactive({ cve: false, msoc: false, common: false })
+const expanded = reactive({ cve: false, msoc: false, mail: false, common: false })
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
   if (!isMobile()) localStorage.setItem('scc-sidebar-open', String(sidebarOpen.value))
