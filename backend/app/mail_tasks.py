@@ -58,7 +58,6 @@ class TemplateInput(BaseModel):
     flow_url: str=""
     template_code: str="cve_alert_en"
     ai_prompt: str=""
-    skill_id: int=0
 
 class TaskInput(BaseModel):
     name: str=Field(min_length=1,max_length=200)
@@ -102,9 +101,6 @@ def create_template(body:TemplateInput):
     with Session(engine) as db:
         values=validate(body)
         validate_flow_url(values["flow_url"])
-        from .ai_config import Skill
-        if values["skill_id"] and not db.get(Skill,values["skill_id"]):
-            raise HTTPException(422,"选择的 Skill 不存在")
         row=MailTemplate(**values)
         db.add(row);db.commit();db.refresh(row)
         return {"code":0,"data":dto(row)}
@@ -115,9 +111,6 @@ def update_template(id:int,body:TemplateInput):
         row=get_row(db,MailTemplate,id)
         values=validate(body)
         validate_flow_url(values["flow_url"])
-        from .ai_config import Skill
-        if values["skill_id"] and not db.get(Skill,values["skill_id"]):
-            raise HTTPException(422,"选择的 Skill 不存在")
         if not values["flow_url"]:values.pop("flow_url")
         for k,v in values.items():setattr(row,k,v)
         row.updated_at=datetime.now(timezone.utc)
