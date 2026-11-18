@@ -519,6 +519,9 @@ app.include_router(source_check_router)
 from .review import router as review_router
 app.include_router(review_router)
 
+from .manual_cve_push import router as manual_cve_router
+app.include_router(manual_cve_router)
+
 from .crawler import router as crawler_router
 app.include_router(crawler_router)
 
