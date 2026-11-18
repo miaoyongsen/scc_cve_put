@@ -216,12 +216,17 @@ def _collect_configured_sources(progress=None):
                 summary["items"]+=1
                 detail["items"]+=1
                 item["from"]=name
+                from .core import record_raw_item, update_raw_item
+                raw_id=record_raw_item(item,source_type="RSS")
                 if item.get("severity")=="未知" and item.get("cve"):
                     from .core import Vulnerability
                     with Session(engine) as check_db:
                         known=check_db.scalar(select(Vulnerability.id).where(Vulnerability.cve==item["cve"]))
                     if not known:item["severity"]=nvd_severity(item["cve"])
                 tier,matched,rejected=evaluate(item)
+                update_raw_item(raw_id,severity=item.get("severity"),
+                                outcome=("过滤："+rejected if rejected else ("直接处理" if tier=="direct" else "待人工审核")),
+                                reason=(rejected or matched or ""))
                 if not rejected:
                     from .eligibility import matching_keywords
                     item["matched_keywords"]=matching_keywords(item)
@@ -234,6 +239,7 @@ def _collect_configured_sources(progress=None):
                 needs_review=tier=="review"
                 if not matches(item, True):
                     detail["filtered_rule"]+=1
+                    update_raw_item(raw_id,outcome="过滤：其他规则",reason="业务规则未命中")
                     continue
                 summary["eligible"]+=1
                 if is_direct:
@@ -261,6 +267,7 @@ def _collect_configured_sources(progress=None):
                         db.commit()
                         notify=False
                 if existing is not None or (item.get("cve") and not new_cve):
+                    update_raw_item(raw_id,outcome="重复",reason="已有记录或重复 CVE")
                     detail["duplicates"].append({"title":item.get("title"),"cve":item.get("cve"),"reason":"已有记录或重复 CVE"})
                 if tier=="review":detail["pending"].append({"title":item.get("title"),"cve":item.get("cve")})
                 log_run(item,tier,"待推送" if notify else ("待审核" if tier=="review" else "未推送"),matched or "")
