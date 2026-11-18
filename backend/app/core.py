@@ -288,9 +288,13 @@ def collection_runs(page:int=1,size:int=20):
     with Session(engine) as db:
         total=db.scalar(select(func.count()).select_from(CollectionRun))
         runs=db.scalars(select(CollectionRun).order_by(CollectionRun.id.desc()).offset((page-1)*size).limit(size)).all()
+        ids=[row.id for row in runs]
+        raw_counts=dict(db.execute(select(RawCollectionItem.run_id,func.count()).where(
+            RawCollectionItem.run_id.in_(ids)).group_by(RawCollectionItem.run_id)).all()) if ids else {}
         return {"code":0,"data":{"total":total,"page":page,"list":[{
             "id":r.id,"started_at":r.started_at,"ended_at":r.ended_at,
-            "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}")
+            "mode":r.mode,"status":r.status,"summary":json.loads(r.summary or "{}"),
+            "raw_count":raw_counts.get(r.id,0)
         } for r in runs]}}
 
 @app.get("/api/v1/collection-runs/{run_id}/raw.xlsx",dependencies=[Depends(auth)])
