@@ -71,6 +71,7 @@ def get_settings():
 def save_settings(body:SettingsInput):
     with Session(engine) as db:
         row=db.get(AISettings,1)
+        if body.active_skill and not db.get(Skill,body.active_skill):raise HTTPException(422,"Skill 不存在")
         if not row:row=AISettings(id=1);db.add(row)
         for k,v in body.dict(exclude={"api_key"}).items():setattr(row,k,v)
         if body.api_key.strip():row.api_key=body.api_key.strip()
@@ -79,7 +80,12 @@ def save_settings(body:SettingsInput):
 @router.get("/skills")
 def get_skills():
     with Session(engine) as db:
-        return {"code":0,"data":[{"id":r.id,"name":r.name,"instructions":r.instructions,"output_format":r.output_format} for r in db.query(Skill).order_by(Skill.id.desc()).all()]}
+        from .mail_tasks import MailTemplate
+        config=db.get(AISettings,1)
+        bindings={}
+        for template in db.query(MailTemplate).all():
+            if template.skill_id:bindings.setdefault(template.skill_id,[]).append(template.name)
+        return {"code":0,"data":[{"id":r.id,"name":r.name,"instructions":r.instructions,"output_format":r.output_format,"usage": (["CVE AI研判"] if config and config.active_skill==r.id else [])+["邮件："+name for name in bindings.get(r.id,[])]} for r in db.query(Skill).order_by(Skill.id.desc()).all()]}
 @router.post("/skills")
 def add_skill(body:SkillInput):
     with Session(engine) as db:
@@ -99,16 +105,24 @@ def remove_skill(skill_id:int):
         row=db.get(Skill,skill_id)
         if not row:raise HTTPException(404,"Skill not found")
         settings=db.get(AISettings,1)
-        if settings and settings.active_skill==skill_id:settings.active_skill=0
+        from .mail_tasks import MailTemplate
+        if (settings and settings.active_skill==skill_id) or db.query(MailTemplate).filter_by(skill_id=skill_id).first():
+            raise HTTPException(409,"该 Skill 正在被 AI 配置或邮件模版使用，请先解除关联")
         db.delete(row);db.commit()
     return {"code":0}
+def compose_skill_prompt(base, skill):
+    sections=[base or ""]
+    if skill:
+        sections.extend(["# "+skill.name,skill.instructions or "",skill.output_format or ""])
+    return "\n\n".join(section for section in sections if section)
+
 @router.get("/prompt")
 def get_prompt():
     with Session(engine) as db:
         row=db.get(AISettings,1)
         skill=db.get(Skill,row.active_skill) if row and row.active_skill else None
         prompt=row.system_prompt if row else ""
-        if skill:prompt+="\n\n# "+skill.name+"\n"+skill.instructions+"\n"+skill.output_format
+        prompt=compose_skill_prompt(prompt,skill)
         return {"code":0,"data":{"prompt":prompt}}
 
 @router.post("/test")
@@ -147,8 +161,7 @@ def analyze_intelligence(item):
             raise RuntimeError("未配置 DeepSeek API Key")
         skill=db.get(Skill,config.active_skill) if config.active_skill else None
         system=config.system_prompt or "你是严谨的漏洞情报分析助手"
-        if skill:
-            system+="\\n\\n"+skill.instructions+"\\n"+skill.output_format
+        system=compose_skill_prompt(system,skill)
         model=config.model or "deepseek-chat"
         key=config.api_key
     if model not in ("deepseek-chat","deepseek-reasoner"):
