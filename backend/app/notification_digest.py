@@ -97,6 +97,15 @@ def add_approved_reviews_to_digest(digest):
                 continue
             reviewed_cves.add(cve)
             entries.append((item,format_wecom_with_ai(item)))
+    # Manually searched CVEs also join the next normal collection digest.
+    # Their records are independent from vulnerability review state.
+    from .manual_cve_push import pending_manual_entries
+    manual_entries=pending_manual_entries()
+    if manual_entries:
+        manual_cves={(item.get("cve") or "").upper() for item,_ in manual_entries}
+        entries=[(item,msg) for item,msg in entries if (item.get("cve") or "").upper() not in manual_cves]
+        entries=manual_entries+entries
+        reviewed_cves.update(manual_cves)
     if not entries:
         return 0
     remaining=[
@@ -154,7 +163,9 @@ def flush_digest():
                 mark_wecom_delivered(part_entries)
                 if kind=="vulnerability":
                     from .review import confirm_queued_delivery
+                    from .manual_cve_push import confirm_manual_delivery
                     confirm_queued_delivery(part_entries)
+                    confirm_manual_delivery(part_entries)
                 result["notifications"]+=len(part_entries)
                 result["pushed"].extend(
                     {"title":item.get("title"),"cve":item.get("cve"),
