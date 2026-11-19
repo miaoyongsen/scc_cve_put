@@ -14,6 +14,7 @@ import Dashboard from './views/Dashboard.vue'
 import MSOCLogs from './views/MSOCLogs.vue'
 import MSOCPushSettings from './views/MSOCPushSettings.vue'
 import MailTasks from './views/MailTasks.vue'
+import EmailSettings from './views/EmailSettings.vue'
 const router = createRouter({history:createWebHistory(),routes:[
 {path:'/login',component:Login},
 {path:'/',redirect:'/dashboard'},
@@ -27,6 +28,7 @@ const router = createRouter({history:createWebHistory(),routes:[
 {path:'/msoc-logs',component:MSOCLogs},
 {path:'/msoc-push-settings',component:MSOCPushSettings},
 {path:'/mail-tasks',component:MailTasks},
+{path:'/email-settings',component:EmailSettings},
 {path:'/mail-templates',redirect:'/mail-tasks'}
 ]})
 router.beforeEach(to=>{if(to.path!='/login'&&!localStorage.getItem('token'))return '/login'})
