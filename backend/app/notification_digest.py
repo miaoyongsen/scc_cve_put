@@ -93,9 +93,9 @@ def add_approved_reviews_to_digest(digest):
             item=serialize(vuln)
             cve=(item.get("cve") or "").upper()
             # Normal review save already enforces a unique CVE.
-            if cve in reviewed_cves:
+            if cve and cve in reviewed_cves:
                 continue
-            reviewed_cves.add(cve)
+            if cve:reviewed_cves.add(cve)
             entries.append((item,format_wecom_with_ai(item)))
     # Manually searched CVEs also join the next normal collection digest.
     # Their records are independent from vulnerability review state.
@@ -117,6 +117,12 @@ def add_approved_reviews_to_digest(digest):
 
 
 def flush_digest():
+    from .notifications import cve_delivery_guard
+    with cve_delivery_guard():
+        return _flush_digest_locked()
+
+
+def _flush_digest_locked():
     digest=_active_digest.get()
     if digest is None:return {"notifications":0,"errors":[],"pushed":[]}
     add_approved_reviews_to_digest(digest)
@@ -126,6 +132,9 @@ def flush_digest():
     result={"notifications":0,"errors":[],"pushed":[]}
     for kind,label in (("vulnerability","漏洞情报"),("article","安全文章")):
         entries=digest[kind]
+        if kind=="vulnerability":
+            from .notifications import filter_delivered_entries
+            entries=filter_delivered_entries(entries)
         if not entries:continue
         if not webhook:
             result["errors"].append(label+": 未启用或未配置企业微信机器人")
