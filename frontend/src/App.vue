@@ -51,7 +51,8 @@ const groups = [
   ] },
   { key: 'common', label: '公共配置', children: [
     { label: 'AI配置', path: '/ai-settings' },
-    { label: 'Skill配置', path: '/skill-settings' }
+    { label: 'Skill配置', path: '/skill-settings' },
+    { label: '邮箱配置', path: '/email-settings' }
   ] }
 ]
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches
