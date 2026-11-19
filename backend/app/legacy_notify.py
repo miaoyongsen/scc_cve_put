@@ -139,6 +139,13 @@ def send_vulnerability(item, ai_enabled=None):
         if os.getenv("SMTP_HOST") and os.getenv("SMTP_TO"):
             send_smtp(item)
         return {"queued":True}
+    from .notifications import cve_delivery_guard, filter_delivered_entries
+    with cve_delivery_guard():
+        if not filter_delivered_entries([(item,message)]):return {}
+        return _send_direct(item,message,c)
+
+
+def _send_direct(item,message,c):
     result={}
     webhook=c["wecom_webhook"] if c["wecom_enabled"] else ""
     if webhook or os.getenv("WECHAT_WEBHOOK_URL"):
