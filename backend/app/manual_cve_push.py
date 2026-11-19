@@ -201,9 +201,10 @@ def _persist_manual_vulnerability(db, item):
     row.references=json.dumps(references,ensure_ascii=False)
     row.source="手动查询"
     row.content_type="vulnerability"
-    row.wecom_sent=False
-    row.wecom_sent_at=None
-    row.pushed=False
+    if not row.wecom_sent:
+        row.wecom_sent=False
+        row.wecom_sent_at=None
+        row.pushed=False
     row.last_seen=datetime.now(timezone.utc)
     db.flush()
     return row
@@ -274,12 +275,22 @@ def confirm_manual_delivery(items):
 
 @router.post("/send")
 def send_manual_cve(body: CVEActionInput):
+    from .notifications import cve_delivery_guard
+    with cve_delivery_guard():
+        return _send_manual_cve_locked(body)
+
+
+def _send_manual_cve_locked(body: CVEActionInput):
     cve=_validate_cve(body.cve)
     item=_prepared_item(cve)
     config=current()
     webhook=(config["wecom_webhook"] if config["wecom_enabled"] else "") or os.getenv("WECHAT_WEBHOOK_URL","").strip()
     if not webhook:
         raise HTTPException(422,"未配置有效的企业微信机器人")
+    from .notifications import already_delivered
+    with Session(engine) as db:
+        if already_delivered(db,cve):
+            raise HTTPException(409,"重复 CVE，历史已推送")
     # Persist at the moment the user confirms, not after network delivery.
     # A failed WeCom attempt stays visible with its unsent state.
     with Session(engine) as db:
