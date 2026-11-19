@@ -287,10 +287,7 @@ def _send_manual_cve_locked(body: CVEActionInput):
     webhook=(config["wecom_webhook"] if config["wecom_enabled"] else "") or os.getenv("WECHAT_WEBHOOK_URL","").strip()
     if not webhook:
         raise HTTPException(422,"未配置有效的企业微信机器人")
-    from .notifications import already_delivered
-    with Session(engine) as db:
-        if already_delivered(db,cve):
-            raise HTTPException(409,"重复 CVE，历史已推送")
+    # Explicit immediate manual delivery intentionally bypasses historical CVE deduplication.
     # Persist at the moment the user confirms, not after network delivery.
     # A failed WeCom attempt stays visible with its unsent state.
     with Session(engine) as db:
