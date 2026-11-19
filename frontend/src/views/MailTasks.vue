@@ -1,7 +1,7 @@
 <template>
 <div class="mail-page">
   <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-space><n-button @click="openSettings">AI配置</n-button><n-button type="primary" @click="open()">创建任务</n-button></n-space></n-space>
-  <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.has_flow_url?'success':'warning'">微软流：{{settings.has_flow_url?"已配置":"未配置"}}</n-tag></n-space>
+  <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.smtp_ready?'success':'warning'">发信邮箱：{{settings.smtp_ready?"已配置":"未配置"}}</n-tag></n-space>
   <n-space style="margin:16px 0"><n-input v-model:value="q" clearable placeholder="搜索任务 / CVE / 邮件主题 / 收件人" @keyup.enter="search"/><n-button @click="search">查询</n-button></n-space>
   <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1350"/>
   <n-space justify="end" style="margin-top:16px"><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
@@ -38,7 +38,7 @@
     <n-form label-placement="top">
       <n-form-item label="邮件 AI 使用的 Skill"><n-select v-model:value="settingsForm.skill_id" :options="skillOptions" placeholder="选择 Skill"/></n-form-item>
       <n-alert type="info" style="margin-bottom:16px">保存后，所有新建或编辑邮件任务的 AI 自动填充均使用此 Skill，无需每次选择。Skill 内容在公共配置中维护。</n-alert>
-      <n-form-item label="Power Automate HTTP 触发器地址"><n-input v-model:value="settingsForm.flow_url" type="password" show-password-on="click" placeholder="留空保留已保存地址"/></n-form-item>
+      <n-alert type="info" style="margin-bottom:12px">邮件发送使用公共配置 → 邮箱配置中的 SMTP 发信渠道及微软流接收邮箱。</n-alert>
       <n-form-item label="微软流模板标识（固定）"><n-input v-model:value="settingsForm.template_code"/></n-form-item>
       <n-space justify="end"><n-button @click="settingsOpen=false">取消</n-button><n-button type="primary" :loading="settingsSaving" @click="saveSettings">保存配置</n-button></n-space>
     </n-form>
@@ -69,18 +69,18 @@ const levels=['Critical','High','Medium','Low','Unknown'].map(v=>({label:v,value
 const validCve=computed(()=>/^CVE-\d{4}-\d{4,}$/i.test(form.value.data.cve_id.trim()))
 const busy=computed(()=>saving.value||sending.value||generating.value)
 const subject=computed(()=> '['+form.value.data.severity+' Security Alert] '+form.value.data.title+' ('+form.value.data.cve_id+')')
-const settings=ref({skill_id:0,skill_name:'未选择',has_flow_url:false,template_code:'cve_alert_en'})
+const settings=ref({skill_id:0,skill_name:'未选择',smtp_ready:false,template_code:'cve_alert_en'})
 const settingsOpen=ref(false),settingsSaving=ref(false),skills=ref([])
-const settingsForm=ref({skill_id:0,flow_url:'',template_code:'cve_alert_en'})
+const settingsForm=ref({skill_id:0,template_code:'cve_alert_en'})
 const skillOptions=computed(()=>[{label:'未选择（仅人工填写）',value:0},...skills.value.map(r=>({label:r.name,value:r.id}))])
-const ready=computed(()=>validCve.value && settings.value.has_flow_url && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
+const ready=computed(()=>validCve.value && settings.value.smtp_ready && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
 const http=axios.create({baseURL:'/api/v1/mail',timeout:120000})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
 const time=v=>v?new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z').toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'
 const editable=r=>['草稿','待发送','发送失败'].includes(r.status)
 const columns=[
  {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},{title:'邮件主题',key:'subject',minWidth:230,ellipsis:{tooltip:true}},
- {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:r.status==='已发送'?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
+ {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
  {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:180,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
 ]
 async function load(){loading.value=true;try{let d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
@@ -93,7 +93,7 @@ async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!con
   const payload={...form.value,recipients:to.value.join(';'),cc:cc.value.join(';')};
   const response=editing.value?await http.put('/drafts/'+editing.value,payload):await http.post('/drafts',payload);
   editing.value=response.data.data.id;
-  if(send){sending.value=true;const r=(await http.post('/tasks/'+editing.value+'/send')).data.data;visible.value=false;if(r.status==='已发送')msg.success('邮件已发送');else msg.warning(r.last_error||r.status)}
+  if(send){sending.value=true;const r=(await http.post('/tasks/'+editing.value+'/send')).data.data;visible.value=false;if(r.status==='SMTP已接收')msg.success('SMTP已接收任务邮件，请在微软流确认正式邮件发送结果');else msg.warning(r.last_error||r.status)}
   else{visible.value=false;msg.success('草稿已保存')}
   q.value='';page.value=1;await load()
 }catch(e){msg.error(e.response?.data?.detail||e.message);await load()}finally{saving.value=false;sending.value=false}}
