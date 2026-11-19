@@ -174,11 +174,7 @@ def edit_pending(vulnerability_id: int, body: ReviewEditInput):
         vuln=db.get(Vulnerability,vulnerability_id)
         if not vuln:
             raise HTTPException(404, "漏洞记录不存在")
-        # Updating severity on an existing CVE must not be blocked by
-        # other source records for that same CVE. Check uniqueness only when
-        # the CVE value is newly added or changed.
-        if cve and cve != (vuln.cve or "").strip().upper():
-            _check_cve_unique(db,cve,vulnerability_id)
+        # Preserve separate source records. Delivery deduplication is final-stage only.
         vuln.cve=cve
         vuln.severity=body.severity
         review.manual_fields=True
@@ -219,8 +215,14 @@ def approve(vulnerability_id:int):
         if not vuln:
             raise HTTPException(404,"Vulnerability not found")
         _validate_review_fields(vuln.cve,vuln.severity,complete=True)
-        # No duplicate CVE check here: distinct sources legitimately share CVEs.
-        # Newly edited CVE values were already checked during edit_pending().
+        from .notifications import already_delivered
+        if already_delivered(db,vuln.cve):
+            review.status="approved"
+            review.reviewed_at=datetime.now(timezone.utc)
+            db.commit()
+            item=serialize(vuln)
+            log_run(item,"review","重复跳过","重复 CVE，历史已推送")
+            return {"code":0,"message":"该 CVE 历史已推送，不再重复推送","data":{"status":"approved","duplicate":True}}
         review.status="queued"
         review.reviewed_at=datetime.now(timezone.utc)
         db.commit()
