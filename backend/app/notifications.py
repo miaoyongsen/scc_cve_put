@@ -3,6 +3,55 @@ import os
 import threading
 import time
 import httpx
+import re
+from contextlib import contextmanager
+
+# Serialize the check + send + confirmed-state write across all CVE send paths.
+_cve_delivery_lock = threading.RLock()
+
+@contextmanager
+def cve_delivery_guard():
+    with _cve_delivery_lock:
+        yield
+
+def delivery_cve(item):
+    if item.get('content_type') in ('article','article_review'):
+        return ''
+    code=str(item.get('cve') or '').strip().upper()
+    return code if re.fullmatch(r'CVE-\d{4}-\d{4,}',code) else ''
+
+def already_delivered(db,cve):
+    from sqlalchemy import select, func
+    from .core import Vulnerability
+    code=str(cve or '').strip().upper()
+    if not code:return False
+    return db.scalar(select(Vulnerability.id).where(
+        func.upper(func.trim(Vulnerability.cve))==code,
+        Vulnerability.content_type=='vulnerability',
+        Vulnerability.wecom_sent.is_(True)).limit(1)) is not None
+
+def filter_delivered_entries(entries):
+    from sqlalchemy.orm import Session
+    from .core import engine,log_run
+    from .review import confirm_queued_delivery,resolve_unknown_reviews
+    from .manual_cve_push import confirm_manual_delivery
+    kept=[];seen=set()
+    with Session(engine) as db:
+        sent=[(item,msg) for item,msg in entries if delivery_cve(item) and already_delivered(db,delivery_cve(item))]
+    for item,msg in sent:
+        log_run(item,'direct','重复跳过','重复 CVE，历史已推送')
+        confirm_queued_delivery([item])
+        confirm_manual_delivery([item])
+        resolve_unknown_reviews(delivery_cve(item))
+    for item,msg in entries:
+        code=delivery_cve(item)
+        if any(item is x for x,_ in sent):continue
+        if code and code in seen:
+            log_run(item,'direct','重复跳过','重复 CVE，本轮已入推送队列')
+            continue
+        if code:seen.add(code)
+        kept.append((item,msg))
+    return kept
 
 _SEND_INTERVAL_SECONDS = 3.0
 _send_lock = threading.Lock()
