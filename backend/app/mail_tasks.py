@@ -81,12 +81,19 @@ class MailSettingsInput(BaseModel):
     clear_flow_url: bool=False
 
 
+def smtp_ready(db):
+    from .email_config import SMTPSettings
+    config=db.get(SMTPSettings,1)
+    return bool(config and config.host and config.username and config.password and config.flow_recipient)
+
+
 def settings_dto(db,row):
     from .ai_config import Skill
     skill=db.get(Skill,row.skill_id) if row.skill_id else None
     return {"skill_id":row.skill_id or 0,
             "skill_name":skill.name if skill else ("Skill 不存在" if row.skill_id else "未选择"),
             "has_flow_url":bool(row.flow_url),
+            "smtp_ready":smtp_ready(db),
             "template_code":row.template_code or "cve_alert_en"}
 
 
@@ -278,7 +285,6 @@ def edit_draft(id:int,body:DraftInput):
 def generate_alert(body:GenerateInput):
     from .ai_config import AISettings, Skill, compose_skill_prompt
     from .core import Vulnerability,serialize
-    from .manual_cve_push import resolve_cve
     cve=body.cve.strip().upper()
     if not re.fullmatch(r"CVE-\d{4}-\d{4,}",cve):
         raise HTTPException(422,"CVE 编号格式错误")
@@ -298,7 +304,9 @@ def generate_alert(body:GenerateInput):
         records=db.scalars(select(Vulnerability).where(Vulnerability.cve==cve).limit(12)).all()
         facts=[serialize(r) for r in records]
     if not facts:
-        try:facts=[resolve_cve(cve)]
+        try:
+            from .manual_cve_push import resolve_cve
+            facts=[resolve_cve(cve)]
         except HTTPException:
             if not body.evidence.strip():raise
     schema=AlertData.model_json_schema()
@@ -329,10 +337,9 @@ def send_task(id:int):
             raise HTTPException(409,"当前状态不可发送，避免重复邮件")
         if not row.data_json:
             raise HTTPException(422,"请先补全结构化情报")
+        from .email_config import config_snapshot, send_logged
+        cfg=config_snapshot(require_recipient=True)
         mail_config=db.get(MailSettings,1)
-        flow_url=mail_config.flow_url if mail_config else ""
-        validate_flow_url(flow_url)
-        if not flow_url:raise HTTPException(422,"请先配置 Power Automate 地址")
         data=AlertData.model_validate_json(row.data_json)
         to,cc=addresses(row.recipients),addresses(row.cc)
         validate_delivery(data,to,cc)
@@ -342,21 +349,16 @@ def send_task(id:int):
             MailTask.status.in_(("草稿","待发送","发送失败"))).values(status="发送中",last_error="")).rowcount
         db.commit()
         if claimed!=1:raise HTTPException(409,"任务已被其他请求处理")
-    status,error="待确认","Flow 未返回明确的发送成功结果，请核对运行历史，勿直接重发"
+    status,error="待确认","SMTP结果未确认，请检查发送记录，勿直接重发"
     try:
-        response=httpx.post(flow_url,json=payload,timeout=90,follow_redirects=False)
-        if response.status_code in (401,403,404):
-            status,error="发送失败","Flow 请求被拒绝或地址不存在："+str(response.status_code)
-        elif response.is_success:
-            try:result=response.json()
-            except ValueError:result={}
-            if isinstance(result,dict) and result.get("success") is True:
-                status,error="已发送",""
-    except httpx.HTTPError:
+        result=send_logged(cfg,cfg["flow_recipient"],"SCC-CTI-TASK "+payload["task_id"],
+                           json.dumps(payload,ensure_ascii=False,indent=2),payload["task_id"])
+        status,error=result["status"],result["error"]
+    except Exception:
         pass
     with Session(engine) as db:
         row=get_row(db,MailTask,id)
         row.status=status;row.last_error=error
-        if status=="已发送":row.sent_at=datetime.now(timezone.utc)
+        if status=="SMTP已接收":row.sent_at=datetime.now(timezone.utc)
         db.commit();db.refresh(row)
         return {"code":0,"data":dto(row)}
