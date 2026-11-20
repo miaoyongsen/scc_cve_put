@@ -1,7 +1,7 @@
 <template>
 <div class="mail-page">
   <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-space><n-button @click="openSettings">AI配置</n-button><n-button type="primary" @click="open()">创建任务</n-button></n-space></n-space>
-  <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.smtp_ready?'success':'warning'">发信邮箱：{{settings.smtp_ready?"已配置":"未配置"}}</n-tag></n-space>
+  <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.smtp_ready?'success':'warning'">Teams Webhook：{{settings.smtp_ready?"已配置":"未配置"}}</n-tag></n-space>
   <n-space style="margin:16px 0"><n-input v-model:value="q" clearable placeholder="搜索任务 / CVE / 邮件主题 / 收件人" @keyup.enter="search"/><n-button @click="search">查询</n-button></n-space>
   <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1350"/>
   <n-space justify="end" style="margin-top:16px"><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
@@ -38,7 +38,7 @@
     <n-form label-placement="top">
       <n-form-item label="邮件 AI 使用的 Skill"><n-select v-model:value="settingsForm.skill_id" :options="skillOptions" placeholder="选择 Skill"/></n-form-item>
       <n-alert type="info" style="margin-bottom:16px">保存后，所有新建或编辑邮件任务的 AI 自动填充均使用此 Skill，无需每次选择。Skill 内容在公共配置中维护。</n-alert>
-      <n-alert type="info" style="margin-bottom:12px">邮件发送使用公共配置 → 邮箱配置中的 SMTP 发信渠道及微软流接收邮箱。</n-alert>
+      <n-alert type="info" style="margin-bottom:12px">邮件发送使用公共配置 → 邮箱配置中的 Teams Webhook，由 Power Automate 使用 Outlook 发送。</n-alert>
       <n-form-item label="微软流模板标识（固定）"><n-input v-model:value="settingsForm.template_code"/></n-form-item>
       <n-space justify="end"><n-button @click="settingsOpen=false">取消</n-button><n-button type="primary" :loading="settingsSaving" @click="saveSettings">保存配置</n-button></n-space>
     </n-form>
@@ -80,7 +80,7 @@ const time=v=>v?new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z').toLocal
 const editable=r=>['草稿','待发送','发送失败'].includes(r.status)
 const columns=[
  {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},{title:'邮件主题',key:'subject',minWidth:230,ellipsis:{tooltip:true}},
- {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
+ {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收','Webhook已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
  {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:180,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
 ]
 async function load(){loading.value=true;try{let d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
@@ -93,7 +93,7 @@ async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!con
   const payload={...form.value,recipients:to.value.join(';'),cc:cc.value.join(';')};
   const response=editing.value?await http.put('/drafts/'+editing.value,payload):await http.post('/drafts',payload);
   editing.value=response.data.data.id;
-  if(send){sending.value=true;const r=(await http.post('/tasks/'+editing.value+'/send')).data.data;visible.value=false;if(r.status==='SMTP已接收')msg.success('SMTP已接收任务邮件，请在微软流确认正式邮件发送结果');else msg.warning(r.last_error||r.status)}
+  if(send){sending.value=true;const r=(await http.post('/tasks/'+editing.value+'/send')).data.data;visible.value=false;if(r.status==='Webhook已接收')msg.success('Webhook已接收任务，请在微软流确认正式邮件发送结果');else msg.warning(r.last_error||r.status)}
   else{visible.value=false;msg.success('草稿已保存')}
   q.value='';page.value=1;await load()
 }catch(e){msg.error(e.response?.data?.detail||e.message);await load()}finally{saving.value=false;sending.value=false}}
