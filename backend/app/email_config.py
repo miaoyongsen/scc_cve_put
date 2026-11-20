@@ -35,6 +35,11 @@ class EmailSendLog(Base):
     error: Mapped[str]=mapped_column(Text,default="")
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
 
+class TeamsMailSettings(Base):
+    __tablename__='teams_mail_settings'
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    webhook_url: Mapped[str]=mapped_column(Text,default='')
+
 Base.metadata.create_all(engine)
 
 class SMTPInput(BaseModel):
@@ -286,3 +291,75 @@ def send_test(body:TestMailInput):
     cfg=config_snapshot()
     result=send_logged(cfg,body.recipient.strip(),"SCC SMTP connection test","This is an SCC SMTP delivery test.")
     return {"code":0,"data":result}
+
+
+# Teams Webhook transport. Legacy SMTP records remain readable.
+class TeamsInput(BaseModel):
+    webhook_url: str = ""
+
+def validate_teams_url(value):
+    from urllib.parse import urlsplit
+    try:
+        u=urlsplit(value)
+        host=(u.hostname or "").lower()
+        if (u.scheme!="https" or u.username or u.password or u.fragment or
+            u.port not in (None,443) or not host.endswith((".logic.azure.com",".api.powerplatform.com",".powerautomate.com"))):
+            raise ValueError()
+    except ValueError:
+        raise HTTPException(422,"请输入微软工作流的 HTTPS Webhook 地址")
+    return value
+
+def teams_snapshot():
+    with Session(engine) as db:
+        row=db.get(TeamsMailSettings,1)
+        if not row or not row.webhook_url:
+            raise HTTPException(422,"请先在公共配置 → 邮箱配置保存 Teams Webhook")
+        return validate_teams_url(row.webhook_url)
+
+@router.get("/teams")
+def get_teams():
+    with Session(engine) as db:
+        row=db.get(TeamsMailSettings,1)
+        return {"code":0,"data":{"configured":bool(row and row.webhook_url)}}
+
+@router.put("/teams")
+def save_teams(body:TeamsInput):
+    with Session(engine) as db:
+        row=db.get(TeamsMailSettings,1)
+        if not row:
+            row=TeamsMailSettings(id=1)
+            db.add(row)
+        if body.webhook_url.strip():
+            row.webhook_url=validate_teams_url(body.webhook_url.strip())
+        elif not row.webhook_url:
+            raise HTTPException(422,"请输入 Webhook 地址")
+        db.commit()
+        return {"code":0,"data":{"configured":True}}
+
+def send_teams_logged(url,payload,subject):
+    import httpx
+    import json
+    validate_teams_url(url)
+    body=json.dumps(payload,ensure_ascii=False)
+    card={"type":"message","attachments":[{"contentType":"application/vnd.microsoft.card.adaptive",
+        "contentUrl":None,"content":{"$schema":"http://adaptivecards.io/schemas/adaptive-card.json",
+        "type":"AdaptiveCard","version":"1.2","body":[{"type":"TextBlock","text":body}]}}]}
+    with Session(engine) as db:
+        row=EmailSendLog(task_id=payload["task_id"],sender="Teams Webhook / Outlook",
+            recipient="; ".join(payload["to"]),subject=subject,body=body,status="发送中")
+        db.add(row);db.commit();db.refresh(row);log_id=row.id
+    status,error="待确认","请求结果未确认，请核对微软流运行记录，勿直接重发"
+    try:
+        response=httpx.post(url,json=card,timeout=30,follow_redirects=False)
+        if 200<=response.status_code<300:
+            status,error="Webhook已接收",""
+        elif response.status_code in (400,401,403,404,405,413,415,422):
+            status,error="发送失败","Webhook HTTP "+str(response.status_code)
+        else:
+            error="Webhook HTTP "+str(response.status_code)+"，请核对运行记录"
+    except httpx.RequestError as exc:
+        error="Webhook请求异常："+type(exc).__name__+"，请核对运行记录"
+    with Session(engine) as db:
+        row=db.get(EmailSendLog,log_id)
+        row.status=status;row.error=error;db.commit()
+    return {"status":status,"error":error,"log_id":log_id}
