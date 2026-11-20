@@ -1,11 +1,12 @@
 from typing import Optional, List
-import json, re, os
+import json, re, os, uuid
 from urllib.parse import urlsplit
 import httpx
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import Integer, String, Text, DateTime, select, func, inspect, text, update
+from sqlalchemy import Integer, String, Text, DateTime, select, func, inspect, text, update, delete, UniqueConstraint
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, mapped_column, Session
 from .core import Base, engine, auth
 
@@ -48,6 +49,27 @@ class MailTask(Base):
     sent_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
     last_error: Mapped[str]=mapped_column(Text,default="")
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
+
+class TrackerReply(Base):
+    __tablename__="mail_tracker_replies"
+    __table_args__=(UniqueConstraint("task_id","message_id"),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    task_id: Mapped[int]=mapped_column(Integer,index=True)
+    recipient: Mapped[str]=mapped_column(String(255))
+    message_id: Mapped[str]=mapped_column(String(512))
+    subject: Mapped[str]=mapped_column(Text,default="")
+    body: Mapped[str]=mapped_column(Text)
+    received_at: Mapped[datetime]=mapped_column(DateTime(timezone=True))
+    source: Mapped[str]=mapped_column(String(20),default="manual")
+
+class TrackerClosure(Base):
+    __tablename__="mail_tracker_closures"
+    __table_args__=(UniqueConstraint("task_id","recipient"),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    task_id: Mapped[int]=mapped_column(Integer,index=True)
+    recipient: Mapped[str]=mapped_column(String(255))
+    closed: Mapped[int]=mapped_column(Integer,default=0)
+    closed_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
 
 Base.metadata.create_all(engine)
 for table, columns in {
@@ -185,6 +207,8 @@ def delete_task(id:int):
     with Session(engine) as db:
         row=get_row(db,MailTask,id)
         if row.status=="发送中":raise HTTPException(409,"发送中不能删除")
+        db.execute(delete(TrackerReply).where(TrackerReply.task_id==id))
+        db.execute(delete(TrackerClosure).where(TrackerClosure.task_id==id))
         db.delete(row);db.commit()
     return {"code":0}
 
@@ -361,3 +385,89 @@ def send_task(id:int):
         if status=="Webhook已接收":row.sent_at=datetime.now(timezone.utc)
         db.commit();db.refresh(row)
         return {"code":0,"data":dto(row)}
+
+
+# Reply records are not inferred from successful Webhook delivery.
+# All endpoints use the existing SCC authentication dependency.
+def tracker_recipients(row):
+    return list(dict.fromkeys(x.lower() for x in addresses(row.recipients)))
+
+def tracker_member(row, recipient):
+    recipient=recipient.strip().lower()
+    if recipient not in tracker_recipients(row):
+        raise HTTPException(422,"仅追踪正式收件人，不包含仅抄送人员")
+    if row.status not in ("Webhook已接收","SMTP已接收","已发送","待确认","发送中"):
+        raise HTTPException(409,"任务尚未提交发送")
+    return recipient
+
+@router.get("/tasks/{id}/tracker")
+def tracker(id:int):
+    with Session(engine) as db:
+        row=get_row(db,MailTask,id)
+        replies=db.scalars(select(TrackerReply).where(TrackerReply.task_id==id).order_by(TrackerReply.received_at,TrackerReply.id)).all()
+        closures={x.recipient:x for x in db.scalars(select(TrackerClosure).where(TrackerClosure.task_id==id)).all()}
+        branches=[]
+        for recipient in tracker_recipients(row):
+            items=[dto(x) for x in replies if x.recipient==recipient]
+            closure=closures.get(recipient)
+            branches.append({"recipient":recipient,"replies":items,"closed":bool(closure and closure.closed),
+                "closed_at":closure.closed_at if closure and closure.closed else None})
+        return {"code":0,"data":{"task_id":"SCC-MAIL-"+str(id),"id":id,"subject":row.subject,
+            "cve":row.cve,"status":row.status,"sent_at":row.sent_at,"recipients":branches}}
+
+class TrackerReplyInput(BaseModel):
+    recipient: str=Field(min_length=1,max_length=255)
+    body: str=Field(min_length=1,max_length=100000)
+    subject: str=Field(default="",max_length=2000)
+    received_at: Optional[datetime]=None
+    message_id: str=Field(default="",max_length=512)
+
+@router.post("/tasks/{id}/tracker/replies")
+def add_tracker_reply(id:int, body:TrackerReplyInput):
+    # Authorized integration may supply the immutable Outlook message ID.
+    # Manual entry generates a separate ID and is explicitly labeled.
+    with Session(engine) as db:
+        row=get_row(db,MailTask,id)
+        recipient=tracker_member(row,body.recipient)
+        if not body.body.strip():
+            raise HTTPException(422,"回复内容不能为空")
+        message_id=body.message_id.strip() or "manual:"+uuid.uuid4().hex
+        if body.message_id.strip() and body.received_at is None:
+            raise HTTPException(422,"自动回传必须提供实际收到邮件的时间")
+        received=body.received_at or datetime.now(timezone.utc)
+        if received.tzinfo is None:
+            raise HTTPException(422,"回复时间必须包含时区")
+        received=received.astimezone(timezone.utc)
+        existing=db.scalar(select(TrackerReply).where(TrackerReply.task_id==id,TrackerReply.message_id==message_id))
+        if existing:
+            if existing.recipient!=recipient:
+                raise HTTPException(409,"邮件ID已关联其他收件人")
+            return {"code":0,"data":dto(existing)}
+        reply=TrackerReply(task_id=id,recipient=recipient,message_id=message_id,
+            subject=body.subject,body=body.body,received_at=received,source="integration" if body.message_id.strip() else "manual")
+        db.add(reply)
+        try:
+            db.commit();db.refresh(reply)
+        except IntegrityError:
+            db.rollback()
+            reply=db.scalar(select(TrackerReply).where(TrackerReply.task_id==id,TrackerReply.message_id==message_id))
+            if not reply or reply.recipient!=recipient:raise HTTPException(409,"回复记录冲突")
+        return {"code":0,"data":dto(reply)}
+
+class TrackerClosureInput(BaseModel):
+    recipient: str
+    closed: bool
+
+@router.put("/tasks/{id}/tracker/closure")
+def set_tracker_closure(id:int,body:TrackerClosureInput):
+    with Session(engine) as db:
+        row=get_row(db,MailTask,id)
+        recipient=tracker_member(row,body.recipient)
+        record=db.scalar(select(TrackerClosure).where(TrackerClosure.task_id==id,TrackerClosure.recipient==recipient))
+        if record is None:
+            record=TrackerClosure(task_id=id,recipient=recipient)
+            db.add(record)
+        record.closed=int(body.closed)
+        record.closed_at=datetime.now(timezone.utc) if body.closed else None
+        db.commit()
+        return {"code":0}
