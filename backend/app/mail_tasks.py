@@ -82,9 +82,9 @@ class MailSettingsInput(BaseModel):
 
 
 def smtp_ready(db):
-    from .email_config import SMTPSettings
-    config=db.get(SMTPSettings,1)
-    return bool(config and config.host and config.username and config.password and config.flow_recipient)
+    from .email_config import TeamsMailSettings
+    config=db.get(TeamsMailSettings,1)
+    return bool(config and config.webhook_url)
 
 
 def settings_dto(db,row):
@@ -337,8 +337,8 @@ def send_task(id:int):
             raise HTTPException(409,"当前状态不可发送，避免重复邮件")
         if not row.data_json:
             raise HTTPException(422,"请先补全结构化情报")
-        from .email_config import config_snapshot, send_logged
-        cfg=config_snapshot(require_recipient=True)
+        from .email_config import teams_snapshot, send_teams_logged
+        url=teams_snapshot()
         mail_config=db.get(MailSettings,1)
         data=AlertData.model_validate_json(row.data_json)
         to,cc=addresses(row.recipients),addresses(row.cc)
@@ -349,16 +349,15 @@ def send_task(id:int):
             MailTask.status.in_(("草稿","待发送","发送失败"))).values(status="发送中",last_error="")).rowcount
         db.commit()
         if claimed!=1:raise HTTPException(409,"任务已被其他请求处理")
-    status,error="待确认","SMTP结果未确认，请检查发送记录，勿直接重发"
+    status,error="待确认","Webhook结果未确认，请检查微软流运行记录，勿直接重发"
     try:
-        result=send_logged(cfg,cfg["flow_recipient"],"SCC-CTI-TASK "+payload["task_id"],
-                           json.dumps(payload,ensure_ascii=False,indent=2),payload["task_id"])
+        result=send_teams_logged(url,payload,subject_for(data))
         status,error=result["status"],result["error"]
     except Exception:
         pass
     with Session(engine) as db:
         row=get_row(db,MailTask,id)
         row.status=status;row.last_error=error
-        if status=="SMTP已接收":row.sent_at=datetime.now(timezone.utc)
+        if status=="Webhook已接收":row.sent_at=datetime.now(timezone.utc)
         db.commit();db.refresh(row)
         return {"code":0,"data":dto(row)}
