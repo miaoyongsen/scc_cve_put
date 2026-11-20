@@ -3,7 +3,7 @@
   <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-space><n-button @click="openSettings">AI配置</n-button><n-button type="primary" @click="open()">创建任务</n-button></n-space></n-space>
   <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.smtp_ready?'success':'warning'">Teams Webhook：{{settings.smtp_ready?"已配置":"未配置"}}</n-tag></n-space>
   <n-space style="margin:16px 0"><n-input v-model:value="q" clearable placeholder="搜索任务 / CVE / 邮件主题 / 收件人" @keyup.enter="search"/><n-button @click="search">查询</n-button></n-space>
-  <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1350"/>
+  <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1500"/>
   <n-space justify="end" style="margin-top:16px"><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
   <n-modal v-model:show="visible" preset="card" :title="editing?'编辑邮件任务':'创建邮件任务'" style="width:min(1150px,96vw);max-height:94vh;overflow:auto" :mask-closable="false" :closable="!busy">
     <n-form label-placement="top" :disabled="busy">
@@ -53,6 +53,54 @@
     <n-descriptions bordered :column="1"><n-descriptions-item label="任务名称">{{detail.name}}</n-descriptions-item><n-descriptions-item label="邮件主题">{{detail.subject}}</n-descriptions-item><n-descriptions-item label="收件人">{{detail.recipients}}</n-descriptions-item><n-descriptions-item label="抄送">{{detail.cc||'—'}}</n-descriptions-item><n-descriptions-item label="状态">{{detail.status}}</n-descriptions-item><n-descriptions-item label="发送时间">{{time(detail.sent_at)}}</n-descriptions-item></n-descriptions>
     <n-alert v-if="detail.last_error" type="warning" style="margin-top:12px">{{detail.last_error}}</n-alert><pre class="body">{{detail.data?JSON.stringify(detail.data,null,2):detail.body}}</pre>
   </n-modal>
+  <n-modal v-model:show="trackerOpen" preset="card" title="Tracker 链路" style="width:min(1200px,96vw);max-height:94vh;overflow:auto">
+    <n-space justify="space-between" align="center" style="margin-bottom:14px">
+      <n-space><n-tag type="info">{{tracker.task_id||'—'}}</n-tag><n-tag :type="tracker.status==='Webhook已接收'?'info':'default'">{{tracker.status||'—'}}</n-tag></n-space>
+      <n-button size="small" :loading="trackerLoading" @click="reloadTracker">刷新链路</n-button>
+    </n-space>
+    <n-alert v-if="trackerError" type="error">{{trackerError}}</n-alert>
+    <n-alert type="info" style="margin-bottom:16px">仅追踪正式收件人。自动邮件回传尚未配置，可先手工登记真实回复；Webhook 已接收不等于 Outlook 已送达。</n-alert>
+    <div class="tracker-stats">
+      <div>收件人 <strong>{{branches.length}}</strong></div>
+      <div>已记录回复 <strong>{{branches.filter(b=>b.replies.length).length}}</strong></div>
+      <div>已闭环 <strong>{{branches.filter(b=>b.closed).length}}</strong></div>
+    </div>
+    <div class="tracker-canvas">
+      <div class="tracker-root"><span class="tracker-kicker">原始邮件</span><strong>{{tracker.cve||tracker.task_id}}</strong><div>{{tracker.subject}}</div><small>提交时间：{{time(tracker.sent_at)}}</small></div>
+      <div class="tracker-branches">
+        <div v-for="b in branches" :key="b.recipient" class="tracker-branch">
+          <div class="tracker-person" :class="{'is-closed':b.closed}">
+            <strong>{{b.recipient}}</strong>
+            <n-tag size="small" :type="b.closed?'success':b.replies.length?'info':'default'">{{b.closed?'已闭环':b.replies.length?'已回复 / 待闭环':'暂无回复记录'}}</n-tag>
+            <n-space size="small" v-if="canTrack"><n-button text type="primary" size="small" @click="recordReply(b)">登记回复</n-button><n-button text :type="b.closed?'warning':'success'" size="small" :disabled="trackerSaving" @click="toggleClosure(b)">{{b.closed?'重新打开':'确认闭环'}}</n-button></n-space>
+            <small v-if="b.closed">闭环：{{time(b.closed_at)}}</small>
+          </div>
+          <div class="tracker-replies">
+            <div v-if="!b.replies.length" class="tracker-empty">暂无回复记录</div>
+            <div v-for="(reply,i) in b.replies" :key="reply.id" class="tracker-reply">
+              <div class="tracker-reply-head"><strong>回复 {{i+1}}</strong><n-tag size="small" :bordered="false">{{reply.source==='integration'?'接口回传':'手工登记'}}</n-tag></div>
+              <small>{{time(reply.received_at)}}</small><div v-if="reply.subject" class="tracker-subject">{{reply.subject}}</div>
+              <div class="tracker-excerpt">{{reply.body}}</div>
+              <n-button text type="primary" size="small" @click="showReply(reply)">查看完整回复</n-button>
+            </div>
+          </div>
+        </div>
+        <div v-if="!branches.length" class="tracker-empty">{{trackerLoading?'加载中…':'暂无正式收件人'}}</div>
+      </div>
+    </div>
+  </n-modal>
+  <n-modal v-model:show="replyOpen" preset="card" title="登记邮件回复" style="width:min(680px,95vw)" :mask-closable="false">
+    <n-form label-placement="top">
+      <n-form-item label="回复人"><n-input :value="replyForm.recipient" disabled/></n-form-item>
+      <n-form-item label="实际收到邮件的时间（北京时间）"><n-input v-model:value="replyForm.received_at" placeholder="YYYY-MM-DD HH:mm:ss"/></n-form-item>
+      <n-form-item label="邮件主题（选填）"><n-input v-model:value="replyForm.subject"/></n-form-item>
+      <n-form-item label="回复内容"><n-input v-model:value="replyForm.body" type="textarea" :rows="8"/></n-form-item>
+      <n-space justify="end"><n-button @click="replyOpen=false">取消</n-button><n-button type="primary" :loading="trackerSaving" :disabled="!replyForm.body.trim()||!replyForm.received_at.trim()" @click="saveReply">保存回复</n-button></n-space>
+    </n-form>
+  </n-modal>
+  <n-modal v-model:show="replyDetailOpen" preset="card" title="邮件回复详情" style="width:min(850px,95vw);max-height:90vh;overflow:auto">
+    <p><strong>{{replyDetail.recipient}}</strong> · {{time(replyDetail.received_at)}}</p><p>{{replyDetail.subject}}</p><pre class="body">{{replyDetail.body}}</pre>
+  </n-modal>
 </div>
 </template>
 <script setup>
@@ -60,6 +108,15 @@ import {ref,computed,h,onMounted} from 'vue'
 import axios from 'axios'
 import {NAlert,NButton,NDataTable,NDescriptions,NDescriptionsItem,NDynamicTags,NForm,NFormItem,NInput,NModal,NPagination,NSelect,NSpace,NTag,useMessage} from 'naive-ui'
 const msg=useMessage(),rows=ref([]),q=ref(''),page=ref(1),total=ref(0),loading=ref(false),saving=ref(false),sending=ref(false),generating=ref(false),visible=ref(false),detailOpen=ref(false),previewOpen=ref(false),detail=ref({}),editing=ref(null),evidence=ref(''),to=ref([]),cc=ref([])
+const trackerOpen=ref(false),trackerLoading=ref(false),trackerSaving=ref(false),trackerError=ref(''),tracker=ref({}),trackerId=ref(null),replyOpen=ref(false),replyDetailOpen=ref(false),replyDetail=ref({}),replyForm=ref({recipient:'',subject:'',body:'',received_at:''})
+const branches=computed(()=>tracker.value.recipients||[])
+const canTrack=computed(()=>['Webhook已接收','SMTP已接收','已发送','待确认','发送中'].includes(tracker.value.status))
+async function openTracker(r){trackerId.value=r.id;tracker.value={};trackerOpen.value=true;await reloadTracker()}
+async function reloadTracker(){const id=trackerId.value;if(id==null)return;trackerLoading.value=true;trackerError.value='';try{const d=(await http.get('/tasks/'+id+'/tracker')).data.data;if(id===trackerId.value)tracker.value=d}catch(e){if(id===trackerId.value)trackerError.value=e.response?.data?.detail||e.message}finally{if(id===trackerId.value)trackerLoading.value=false}}
+function recordReply(b){replyForm.value={recipient:b.recipient,subject:'',body:'',received_at:''};replyOpen.value=true}
+function showReply(r){replyDetail.value=r;replyDetailOpen.value=true}
+async function saveReply(){if(trackerSaving.value)return;const t=replyForm.value.received_at.trim();if(!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(t)||Number.isNaN(Date.parse(t.replace(' ','T')+'+08:00'))){msg.error('请输入正确的北京时间 YYYY-MM-DD HH:mm:ss');return}trackerSaving.value=true;try{await http.post('/tasks/'+trackerId.value+'/tracker/replies',{...replyForm.value,received_at:t.replace(' ','T')+'+08:00'});replyOpen.value=false;msg.success('已登记回复');await reloadTracker()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
+async function toggleClosure(b){if(trackerSaving.value||!confirm((b.closed?'重新打开 ':'确认闭环 ')+b.recipient+'？'))return;trackerSaving.value=true;try{await http.put('/tasks/'+trackerId.value+'/tracker/closure',{recipient:b.recipient,closed:!b.closed});await reloadTracker()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
 const product=()=>({product:'',affected_version:'',upgrade_version:'',vulnerability_impact:''})
 const reference=()=>({name:'',url:''})
 const blankData=()=>({cve_id:'',severity:'',title:'',vulnerability_summary:'',affected_products:[product()],upgrade_recommendation:'',required_actions:'',references:[reference()]})
@@ -81,7 +138,7 @@ const editable=r=>['草稿','待发送','发送失败'].includes(r.status)
 const columns=[
  {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},{title:'邮件主题',key:'subject',minWidth:230,ellipsis:{tooltip:true}},
  {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收','Webhook已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
- {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:180,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
+ {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:260,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),h(NButton,{text:true,type:'info',onClick:()=>openTracker(r)},()=> 'Tracker链路'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
 ]
 async function load(){loading.value=true;try{let d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
 function search(){page.value=1;load()}
@@ -108,4 +165,5 @@ onMounted(()=>{load();loadSettings()})
 .mail-page{box-sizing:border-box;margin:16px auto;width:calc(100% - 32px);background:#fff;border-radius:10px;padding:24px;min-width:0}
 .body{white-space:pre-wrap;overflow-wrap:anywhere;max-height:55vh;overflow:auto;font:inherit;line-height:1.7;background:#f5f7fa;padding:16px}
 .table-wrap{overflow-x:auto;margin:10px 0 20px}table{width:100%;border-collapse:collapse}th,td{padding:10px;text-align:left;border:1px solid #e0e4eb;vertical-align:top}th{background:#f5f7fa}.edit-table{min-width:800px}.edit-table td:not(:last-child){width:24%}.ref-row{display:grid;grid-template-columns:1fr 2fr auto;gap:10px;align-items:center;margin-bottom:12px}.preview{font-family:Arial,sans-serif;font-size:15px;line-height:1.7;color:#171717;overflow-wrap:anywhere}.preview p,.preview td{white-space:pre-wrap}.preview h3{font-size:17px}.red{color:#d03050}.muted{color:#888}
+.tracker-stats{display:flex;gap:16px;flex-wrap:wrap;margin:14px 0}.tracker-stats>div{background:#f4f7fb;border:1px solid #e4e9f1;border-radius:8px;padding:12px 18px;flex:1;min-width:100px;color:#596579}.tracker-stats strong{font-size:22px;color:#172b4d;margin-left:8px}.tracker-canvas{display:flex;align-items:center;gap:30px;background:#f7f9fc;border:1px solid #e4e9f1;border-radius:12px;padding:24px;overflow-x:auto;min-height:240px}.tracker-root{position:relative;flex:0 0 220px;padding:18px;border:1px solid #95b5e4;border-left:4px solid #2080f0;border-radius:8px;background:white;display:grid;gap:8px;overflow-wrap:anywhere}.tracker-root:after{content:'';position:absolute;width:31px;height:1px;background:#9db1cc;left:100%;top:50%}.tracker-kicker{font-size:12px;color:#66809f}.tracker-root strong{font-size:17px;color:#234a83}.tracker-canvas small{font-size:12px;color:#778398}.tracker-branches{display:flex;flex-direction:column;position:relative;gap:20px;flex:1;min-width:560px}.tracker-branches:before{content:'';position:absolute;left:0;top:var(--unused,0);bottom:0;width:1px;background:#9db1cc}.tracker-branch{display:flex;align-items:center;position:relative;padding-left:22px;gap:24px}.tracker-branch:before{content:'';position:absolute;left:0;top:50%;width:22px;height:1px;background:#9db1cc}.tracker-person{position:relative;display:grid;justify-items:start;gap:9px;flex:0 0 200px;padding:13px;border:1px solid #cbd7e7;border-radius:8px;background:white;overflow-wrap:anywhere;min-width:0}.tracker-person strong{max-width:100%;overflow-wrap:anywhere}.tracker-person.is-closed{border-color:#73bf98;background:#f1fbf5}.tracker-person:after{content:'';position:absolute;left:100%;width:24px;top:50%;height:1px;background:#9db1cc}.tracker-replies{display:flex;gap:18px;align-items:stretch;flex:1}.tracker-reply,.tracker-empty{position:relative;flex:0 0 220px;padding:13px;border:1px solid #d5e0eb;border-radius:8px;background:white;overflow-wrap:anywhere}.tracker-reply:not(:last-child):after{content:'';position:absolute;left:100%;width:18px;top:50%;height:1px;background:#9db1cc}.tracker-empty{flex:0 0 160px;color:#8792a3;border-style:dashed;align-self:center}.tracker-reply-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:5px}.tracker-subject{font-weight:500;margin:8px 0}.tracker-excerpt{white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;color:#40516b;margin:8px 0}.tracker-root,.tracker-person,.tracker-reply{box-shadow:0 2px 8px #1b34500a}
 </style>
