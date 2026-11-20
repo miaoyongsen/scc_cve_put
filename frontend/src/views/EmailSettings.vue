@@ -11,9 +11,14 @@
         <n-form-item-gi span="2 m:1" label="SMTP 端口"><n-input-number v-model:value="form.port" :min="1" :max="65535" style="width:100%"/></n-form-item-gi>
         <n-form-item-gi span="2 m:1" label="微软流接收邮箱"><n-input v-model:value="form.flow_recipient" placeholder="绑定 Power Automate 的公司邮箱"/></n-form-item-gi>
       </n-grid>
-      <n-alert type="info" style="margin-bottom:16px">请使用已获授权的 SMTP 邮箱。连接测试只进行加密连接和账号认证，不发送邮件；CVE任务将向微软流接收邮箱发送 SCC-CTI-TASK JSON 正文邮件。</n-alert>
+      <n-alert type="info" style="margin-bottom:16px">请使用已获授权的 SMTP 邮箱。连接测试使用当前输入的配置，无需先保存，不发送邮件；CVE任务将向微软流接收邮箱发送 SCC-CTI-TASK JSON 正文邮件。</n-alert>
       <n-space><n-button type="primary" :loading="saving" :disabled="testing" @click="save">保存配置</n-button><n-button :loading="testing" :disabled="saving" @click="test">测试连接</n-button></n-space>
       <n-alert v-if="testResult" :type="testResult.ok?'success':'error'" style="margin-top:12px">{{testResult.text}}</n-alert>
+      <div v-if="testResult?.steps?.length" style="margin-top:16px">
+        <n-space justify="space-between" align="center"><strong>SMTP 连接诊断</strong><n-button size="small" @click="copyDiagnosis">复制诊断日志</n-button></n-space>
+        <n-data-table style="margin-top:12px" :columns="diagnosisColumns" :data="testResult.steps" :pagination="false" :row-key="r=>r.name" :scroll-x="650"/>
+        <pre class="mail-body" style="max-height:240px">{{diagnosisText()}}</pre>
+      </div>
     </n-form>
   </n-card>
   <n-card title="发送测试邮件" style="margin-top:16px">
@@ -60,7 +65,22 @@ function changeSecurity(v){form.value.port=v==='ssl'?465:587}
 function apply(d){form.value={host:d.host,port:d.port,security:d.security,username:d.username,password:'',flow_recipient:d.flow_recipient};hasPassword.value=d.has_password}
 async function loadSettings(){try{apply((await http.get('')).data.data)}catch(e){msg.error(err(e))}}
 async function save(){saving.value=true;testResult.value=null;try{apply((await http.put('',form.value)).data.data);msg.success('邮箱配置已保存')}catch(e){msg.error(err(e))}finally{saving.value=false}}
-async function test(){testing.value=true;testResult.value=null;try{const d=(await http.post('/test')).data.data;testResult.value={ok:true,text:d.message};msg.success(d.message)}catch(e){testResult.value={ok:false,text:err(e)};msg.error(err(e))}finally{testing.value=false}}
+const diagnosisColumns=[
+ {title:'诊断阶段',key:'name',width:150},
+ {title:'结果',key:'status',width:90,render:r=>h(NTag,{type:r.status==='成功'?'success':r.status==='失败'?'error':'default'},()=>r.status)},
+ {title:'耗时',key:'elapsed_ms',width:100,render:r=>r.elapsed_ms==null?'—':r.elapsed_ms+' ms'},
+ {title:'详细响应 / 错误',key:'detail',minWidth:300,render:r=>h('span',{style:'white-space:pre-wrap;overflow-wrap:anywhere'},r.detail||'—')}
+]
+function diagnosisText(){
+ const d=testResult.value
+ if(!d)return ''
+ return [d.text,'SMTP服务器：'+(d.server||'—'),'加密方式：'+(d.security||'—'),...(d.steps||[]).map(r=>r.name+' | '+r.status+' | '+(r.elapsed_ms==null?'—':r.elapsed_ms+' ms')+' | '+(r.detail||'—'))].join('\n')
+}
+async function copyDiagnosis(){
+ try{await navigator.clipboard.writeText(diagnosisText());msg.success('已复制诊断日志')}
+ catch(e){const a=document.createElement('textarea');a.value=diagnosisText();document.body.appendChild(a);a.select();try{if(!document.execCommand('copy'))throw Error('copy failed');msg.success('已复制诊断日志')}catch(e){msg.warning('请手动选择下方日志复制')}finally{a.remove()}}
+}
+async function test(){testing.value=true;testResult.value=null;try{const d=(await http.post('/test',form.value)).data.data;testResult.value={ok:d.success,text:d.message,steps:d.steps,server:d.server,security:d.security};if(d.success)msg.success(d.message);else msg.error(d.message)}catch(e){testResult.value={ok:false,text:err(e)};msg.error(err(e))}finally{testing.value=false}}
 async function loadLogs(){logsLoading.value=true;try{const d=(await http.get('/logs',{params:{page:page.value}})).data.data;rows.value=d.list;total.value=d.total}catch(e){msg.error(err(e))}finally{logsLoading.value=false}}
 function changePage(v){page.value=v;loadLogs()}
 async function view(r){try{detail.value=(await http.get('/logs/'+r.id)).data.data;detailOpen.value=true}catch(e){msg.error(err(e))}}
