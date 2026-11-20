@@ -119,17 +119,111 @@ def save_settings(body:SMTPInput):
         db.commit();db.refresh(row)
         return {"code":0,"data":public_settings(row)}
 
+def diagnostic_text(value, cfg):
+    import base64
+    value = str(value)
+    for secret in (cfg.get("password"), cfg.get("username")):
+        if secret:
+            value = re.sub(re.escape(secret), "[已脱敏]", value, flags=re.I)
+            value = value.replace(base64.b64encode(secret.encode()).decode(), "[已脱敏]")
+    return value[:2000]
+
+
 @router.post("/test")
-def test_connection():
-    cfg=config_snapshot()
-    smtp=None
+def test_connection(body: SMTPInput = None):
+    import time
+    if body is None:
+        cfg = config_snapshot()
+    else:
+        validate_settings(body)
+        cfg = {"host": body.host.strip(), "port": body.port,
+               "security": body.security, "username": body.username.strip(),
+               "password": body.password}
+        if not cfg["password"]:
+            with Session(engine) as db:
+                row = db.get(SMTPSettings, 1)
+                if row and row.username == cfg["username"] and row.host == cfg["host"]:
+                    cfg["password"] = row.password
+        if not cfg["password"]:
+            raise HTTPException(422, "请输入 SMTP 授权码")
+    names = ["DNS 域名解析", "TCP 端口连接", "SSL/TLS 握手",
+             "SMTP 服务响应", "SMTP 账号认证"]
+    steps = {name: {"name": name, "status": "未执行", "elapsed_ms": None, "detail": ""} for name in names}
+    smtp = None
+    sock = None
+    active = ""
+    started = time.monotonic()
+    def run(name, fn):
+        nonlocal active, started
+        active = name
+        started = time.monotonic()
+        result = fn()
+        steps[name].update(status="成功", elapsed_ms=round((time.monotonic()-started)*1000))
+        if isinstance(result, str):
+            steps[name]["detail"] = diagnostic_text(result, cfg)
+        return result
+    def check_reply(pair, expected):
+        code, reply = pair
+        if code != expected:
+            raise smtplib.SMTPResponseException(code, reply)
+        return str(code) + " " + reply.decode("utf-8", errors="replace")
+    def connect_tcp():
+        last = None
+        deadline = time.monotonic() + 10
+        for family, kind, proto, _, address in addresses:
+            s = socket.socket(family, kind, proto)
+            try:
+                s.settimeout(max(0.1, deadline-time.monotonic()))
+                s.connect(address)
+                s.settimeout(10)
+                return s
+            except OSError as exc:
+                last = exc
+                s.close()
+            if time.monotonic() >= deadline:
+                break
+        raise last or OSError("No reachable address")
     try:
-        smtp=open_smtp(cfg)
-        return {"code":0,"data":{"success":True,"message":"SMTP TLS连接及账号认证成功"}}
+        addresses = run(names[0], lambda: socket.getaddrinfo(cfg["host"], cfg["port"], type=socket.SOCK_STREAM))
+        steps[names[0]]["detail"] = ", ".join(dict.fromkeys(a[4][0] for a in addresses))
+        sock = run(names[1], connect_tcp)
+        steps[names[1]]["detail"] = str(sock.getpeername())
+        smtp = smtplib.SMTP(timeout=10)
+        smtp._host = cfg["host"]
+        if cfg["security"] == "ssl":
+            sock = run(names[2], lambda: ssl.create_default_context().wrap_socket(sock, server_hostname=cfg["host"]))
+            steps[names[2]]["detail"] = str(sock.version())
+        smtp.sock = sock
+        def greeting():
+            check_reply(smtp.getreply(), 220)
+            return check_reply(smtp.ehlo(), 250)
+        run(names[3], greeting)
+        if cfg["security"] == "starttls":
+            def upgrade():
+                check_reply(smtp.starttls(context=ssl.create_default_context()), 220)
+                return str(smtp.sock.version())
+            run(names[2], upgrade)
+            run(names[3], lambda: check_reply(smtp.ehlo(), 250))
+        def login():
+            code, reply = smtp.login(cfg["username"], cfg["password"])
+            return str(code) + " " + reply.decode("utf-8", errors="replace")
+        run(names[4], login)
+        success, message = True, "SMTP TLS连接及账号认证成功（未发送邮件）"
     except Exception as exc:
-        raise HTTPException(502,error_label(exc))
+        detail = diagnostic_text(type(exc).__name__ + ": " + str(exc), cfg)
+        if active:
+            steps[active].update(status="失败", elapsed_ms=round((time.monotonic()-started)*1000), detail=detail)
+        success, message = False, active + "失败：" + error_label(exc)
     finally:
-        if smtp is not None:smtp.close()
+        if smtp is not None:
+            smtp.close()
+        if sock is not None:
+            sock.close()
+    ordered = names if cfg["security"] == "ssl" else [names[0],names[1],names[3],names[2],names[4]]
+    return {"code":0,"data":{"success":success,"message":message,
+        "steps":[steps[n] for n in ordered],
+        "server":cfg["host"]+":"+str(cfg["port"]), "security":cfg["security"]}}
+
 
 def send_logged(cfg,recipient,subject,body,task_id=""):
     """Log each actual SMTP attempt; success means SMTP acceptance, not Flow delivery."""
