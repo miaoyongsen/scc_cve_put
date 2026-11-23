@@ -72,6 +72,17 @@ class TrackerClosure(Base):
     closed: Mapped[int]=mapped_column(Integer,default=0)
     closed_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
 
+class TrackerReminder(Base):
+    __tablename__="mail_tracker_reminders"
+    __table_args__=(UniqueConstraint("task_id","recipient"),)
+    id: Mapped[int]=mapped_column(Integer,primary_key=True)
+    task_id: Mapped[int]=mapped_column(Integer,index=True)
+    recipient: Mapped[str]=mapped_column(String(255))
+    status: Mapped[str]=mapped_column(String(30),default="发送中")
+    attempts: Mapped[int]=mapped_column(Integer,default=1)
+    sent_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
+    last_error: Mapped[str]=mapped_column(Text,default="")
+
 Base.metadata.create_all(engine)
 for table, columns in {
     "mail_templates": {"flow_url":"TEXT DEFAULT ''", "template_code":"VARCHAR(100) DEFAULT 'cve_alert_en'", "ai_prompt":"TEXT DEFAULT ''","skill_id":"INTEGER NOT NULL DEFAULT 0"},
@@ -439,14 +450,86 @@ def tracker(id:int):
         row=get_row(db,MailTask,id)
         replies=db.scalars(select(TrackerReply).where(TrackerReply.task_id==id).order_by(TrackerReply.received_at,TrackerReply.id)).all()
         closures={x.recipient:x for x in db.scalars(select(TrackerClosure).where(TrackerClosure.task_id==id)).all()}
+        reminders={x.recipient:x for x in db.scalars(select(TrackerReminder).where(TrackerReminder.task_id==id)).all()}
+        deadline=row.deadline
+        if deadline is not None and deadline.tzinfo is None:
+            deadline=deadline.replace(tzinfo=timezone.utc)
+        overdue_now=bool(deadline and datetime.now(timezone.utc)>deadline and row.status in ("Webhook已接收","SMTP已接收","已发送"))
         branches=[]
         for recipient in tracker_recipients(row):
             items=[dto(x) for x in replies if x.recipient==recipient]
             closure=closures.get(recipient)
-            branches.append({"recipient":recipient,"replies":items,"closed":bool(closure and closure.closed),
-                "closed_at":closure.closed_at if closure and closure.closed else None})
+            reminder=reminders.get(recipient)
+            closed=bool(closure and closure.closed)
+            branches.append({"recipient":recipient,"replies":items,"closed":closed,
+                "closed_at":closure.closed_at if closure and closure.closed else None,
+                "overdue":bool(overdue_now and not closed),
+                "reminder_status":reminder.status if reminder else "",
+                "reminder_sent_at":reminder.sent_at if reminder else None,
+                "reminder_error":reminder.last_error if reminder else ""})
         return {"code":0,"data":{"task_id":"SCC-MAIL-"+str(id),"id":id,"subject":row.subject,
             "cve":row.cve,"status":row.status,"sent_at":row.sent_at,"deadline":row.deadline,"recipients":branches}}
+
+class TrackerReminderInput(BaseModel):
+    recipient: str=Field(min_length=1,max_length=255)
+
+@router.post("/tasks/{id}/tracker/remind")
+def remind_tracker_recipient(id:int, body:TrackerReminderInput):
+    from .email_config import teams_snapshot, send_teams_logged
+    with Session(engine) as db:
+        row=get_row(db,MailTask,id)
+        recipient=tracker_member(row,body.recipient)
+        if row.status not in ("Webhook已接收","SMTP已接收","已发送"):
+            raise HTTPException(409,"原邮件尚未确认提交，不能发送超期提醒")
+        deadline=row.deadline
+        if deadline is None:
+            raise HTTPException(409,"该任务没有设置截止时间")
+        if deadline.tzinfo is None:
+            deadline=deadline.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc)<=deadline:
+            raise HTTPException(409,"尚未超过任务截止时间")
+        closure=db.scalar(select(TrackerClosure).where(
+            TrackerClosure.task_id==id,TrackerClosure.recipient==recipient))
+        if closure and closure.closed:
+            raise HTTPException(409,"该收件人已闭环，无需发送超期提醒")
+        if not row.data_json:
+            raise HTTPException(422,"原邮件结构化内容不存在")
+        mail_config=db.get(MailSettings,1)
+        if mail_config is None:
+            raise HTTPException(422,"邮件发送配置不存在")
+        url=teams_snapshot()
+        reminder=db.scalar(select(TrackerReminder).where(
+            TrackerReminder.task_id==id,TrackerReminder.recipient==recipient))
+        if reminder and reminder.status in ("Webhook已接收","待确认","发送中"):
+            raise HTTPException(409,"该收件人的超期提醒已提交或结果待确认，避免重复发送")
+        if reminder is None:
+            reminder=TrackerReminder(task_id=id,recipient=recipient,status="发送中",attempts=1)
+            db.add(reminder)
+        else:
+            reminder.status="发送中"
+            reminder.attempts=(reminder.attempts or 0)+1
+            reminder.last_error=""
+        data=AlertData.model_validate_json(row.data_json)
+        payload={"task_id":"SCC-MAIL-"+str(id),"template_id":mail_config.template_code,
+                 "to":[recipient],"cc":[],"data":data.model_dump()}
+        subject=subject_for(data)
+        db.commit()
+    status,error="待确认","Webhook结果未确认，请检查微软流运行记录，勿直接重发"
+    try:
+        result=send_teams_logged(url,payload,subject)
+        status,error=result["status"],result["error"]
+    except Exception as exc:
+        error="请求结果未确认："+type(exc).__name__+"，请检查微软流运行记录，勿直接重发"
+    with Session(engine) as db:
+        reminder=db.scalar(select(TrackerReminder).where(
+            TrackerReminder.task_id==id,TrackerReminder.recipient==recipient))
+        if reminder:
+            reminder.status=status
+            reminder.last_error=error
+            if status=="Webhook已接收":
+                reminder.sent_at=datetime.now(timezone.utc)
+            db.commit()
+    return {"code":0,"data":{"status":status,"error":error,"recipient":recipient}}
 
 class TrackerReplyInput(BaseModel):
     recipient: str=Field(min_length=1,max_length=255)
