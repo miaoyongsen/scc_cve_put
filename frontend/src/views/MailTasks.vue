@@ -3,12 +3,17 @@
   <n-space justify="space-between" align="center"><h2>邮件推送列表</h2><n-space><n-button @click="openSettings">AI配置</n-button><n-button type="primary" @click="open()">创建任务</n-button></n-space></n-space>
   <n-space align="center" style="margin:10px 0 16px"><n-tag type="info">当前 Skill：{{settings.skill_name||"未选择"}}</n-tag><n-tag :type="settings.smtp_ready?'success':'warning'">Teams Webhook：{{settings.smtp_ready?"已配置":"未配置"}}</n-tag></n-space>
   <n-space style="margin:16px 0"><n-input v-model:value="q" clearable placeholder="搜索任务 / CVE / 邮件主题 / 收件人" @keyup.enter="search"/><n-button @click="search">查询</n-button></n-space>
-  <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1500"/>
+  <n-data-table :columns="columns" :data="rows" :loading="loading" :row-key="r=>r.id" :pagination="false" :scroll-x="1750"/>
   <n-space justify="end" style="margin-top:16px"><n-pagination :page="page" :page-size="20" :item-count="total" @update:page="changePage"/></n-space>
   <n-modal v-model:show="visible" preset="card" :title="editing?'编辑邮件任务':'创建邮件任务'" style="width:min(1150px,96vw);max-height:94vh;overflow:auto" :mask-closable="false" :closable="!busy">
     <n-form label-placement="top" :disabled="busy">
       <n-form-item label="任务名称（选填，默认使用漏洞标题）"><n-input v-model:value="form.name"/></n-form-item>
-      <n-form-item label="当前 AI Skill"><n-tag type="info">{{settings.skill_name||"未选择"}}</n-tag></n-form-item>
+      <n-space align="end" :wrap="true" style="width:100%" size="large">
+        <n-form-item label="当前 AI Skill" style="flex:1;min-width:220px"><n-tag type="info">{{settings.skill_name||"未选择"}}</n-tag></n-form-item>
+        <n-form-item label="截止时间（北京时间，必填）" style="width:280px;max-width:100%">
+          <n-date-picker v-model:value="form.deadline" type="datetime" format="yyyy-MM-dd HH:mm" clearable placeholder="选择截止日期和时间" style="width:100%"/>
+        </n-form-item>
+      </n-space>
       <n-form-item label="CVE 编号">
         <n-space align="center" style="width:100%"><n-input v-model:value="form.data.cve_id" placeholder="CVE-2026-12345" style="width:min(340px,60vw)"/><n-button type="info" :loading="generating" :disabled="!validCve||busy||!settings.skill_id" @click="generate">AI 自动填充</n-button></n-space>
       </n-form-item>
@@ -50,7 +55,7 @@
     </div>
   </n-modal>
   <n-modal v-model:show="detailOpen" preset="card" title="任务详情" style="width:min(950px,95vw);max-height:93vh;overflow:auto">
-    <n-descriptions bordered :column="1"><n-descriptions-item label="任务名称">{{detail.name}}</n-descriptions-item><n-descriptions-item label="邮件主题">{{detail.subject}}</n-descriptions-item><n-descriptions-item label="收件人">{{detail.recipients}}</n-descriptions-item><n-descriptions-item label="抄送">{{detail.cc||'—'}}</n-descriptions-item><n-descriptions-item label="状态">{{detail.status}}</n-descriptions-item><n-descriptions-item label="发送时间">{{time(detail.sent_at)}}</n-descriptions-item></n-descriptions>
+    <n-descriptions bordered :column="1"><n-descriptions-item label="任务名称">{{detail.name}}</n-descriptions-item><n-descriptions-item label="邮件主题">{{detail.subject}}</n-descriptions-item><n-descriptions-item label="收件人">{{detail.recipients}}</n-descriptions-item><n-descriptions-item label="抄送">{{detail.cc||'—'}}</n-descriptions-item><n-descriptions-item label="状态">{{detail.status}}</n-descriptions-item><n-descriptions-item label="发送时间">{{time(detail.sent_at)}}</n-descriptions-item><n-descriptions-item label="截止时间">{{time(detail.deadline)}}</n-descriptions-item></n-descriptions>
     <n-alert v-if="detail.last_error" type="warning" style="margin-top:12px">{{detail.last_error}}</n-alert><pre class="body">{{detail.data?JSON.stringify(detail.data,null,2):detail.body}}</pre>
   </n-modal>
   <n-modal v-model:show="trackerOpen" preset="card" title="Tracker 链路" style="width:min(1200px,96vw);max-height:94vh;overflow:auto">
@@ -66,7 +71,7 @@
       <div>已闭环 <strong>{{branches.filter(b=>b.closed).length}}</strong></div>
     </div>
     <div class="tracker-canvas">
-      <div class="tracker-root"><span class="tracker-kicker">原始邮件</span><strong>{{tracker.cve||tracker.task_id}}</strong><div>{{tracker.subject}}</div><small>提交时间：{{time(tracker.sent_at)}}</small></div>
+      <div class="tracker-root"><span class="tracker-kicker">原始邮件</span><strong>{{tracker.cve||tracker.task_id}}</strong><div>{{tracker.subject}}</div><small>提交时间：{{time(tracker.sent_at)}}</small><small>截止时间：{{time(tracker.deadline)}}</small></div>
       <div class="tracker-branches">
         <div v-for="b in branches" :key="b.recipient" class="tracker-branch">
           <div class="tracker-person" :class="{'is-closed':b.closed}">
@@ -92,10 +97,10 @@
   <n-modal v-model:show="replyOpen" preset="card" title="登记邮件回复" style="width:min(680px,95vw)" :mask-closable="false">
     <n-form label-placement="top">
       <n-form-item label="回复人"><n-input :value="replyForm.recipient" disabled/></n-form-item>
-      <n-form-item label="实际收到邮件的时间（北京时间）"><n-input v-model:value="replyForm.received_at" placeholder="YYYY-MM-DD HH:mm:ss"/></n-form-item>
+      <n-form-item label="实际收到邮件的时间（北京时间）"><n-date-picker v-model:value="replyForm.received_at" type="datetime" format="yyyy-MM-dd HH:mm" clearable placeholder="选择实际收到邮件的日期和时间" style="width:100%"/></n-form-item>
       <n-form-item label="邮件主题（选填）"><n-input v-model:value="replyForm.subject"/></n-form-item>
       <n-form-item label="回复内容"><n-input v-model:value="replyForm.body" type="textarea" :rows="8"/></n-form-item>
-      <n-space justify="end"><n-button @click="replyOpen=false">取消</n-button><n-button type="primary" :loading="trackerSaving" :disabled="!replyForm.body.trim()||!replyForm.received_at.trim()" @click="saveReply">保存回复</n-button></n-space>
+      <n-space justify="end"><n-button @click="replyOpen=false">取消</n-button><n-button type="primary" :loading="trackerSaving" :disabled="!replyForm.body.trim()||!replyForm.received_at" @click="saveReply">保存回复</n-button></n-space>
     </n-form>
   </n-modal>
   <n-modal v-model:show="replyDetailOpen" preset="card" title="邮件回复详情" style="width:min(850px,95vw);max-height:90vh;overflow:auto">
@@ -106,21 +111,21 @@
 <script setup>
 import {ref,computed,h,onMounted} from 'vue'
 import axios from 'axios'
-import {NAlert,NButton,NDataTable,NDescriptions,NDescriptionsItem,NDynamicTags,NForm,NFormItem,NInput,NModal,NPagination,NSelect,NSpace,NTag,useMessage} from 'naive-ui'
+import {NAlert,NButton,NDataTable,NDatePicker,NDescriptions,NDescriptionsItem,NDynamicTags,NForm,NFormItem,NInput,NModal,NPagination,NSelect,NSpace,NTag,useMessage} from 'naive-ui'
 const msg=useMessage(),rows=ref([]),q=ref(''),page=ref(1),total=ref(0),loading=ref(false),saving=ref(false),sending=ref(false),generating=ref(false),visible=ref(false),detailOpen=ref(false),previewOpen=ref(false),detail=ref({}),editing=ref(null),evidence=ref(''),to=ref([]),cc=ref([])
-const trackerOpen=ref(false),trackerLoading=ref(false),trackerSaving=ref(false),trackerError=ref(''),tracker=ref({}),trackerId=ref(null),replyOpen=ref(false),replyDetailOpen=ref(false),replyDetail=ref({}),replyForm=ref({recipient:'',subject:'',body:'',received_at:''})
+const trackerOpen=ref(false),trackerLoading=ref(false),trackerSaving=ref(false),trackerError=ref(''),tracker=ref({}),trackerId=ref(null),replyOpen=ref(false),replyDetailOpen=ref(false),replyDetail=ref({}),replyForm=ref({recipient:'',subject:'',body:'',received_at:null})
 const branches=computed(()=>tracker.value.recipients||[])
 const canTrack=computed(()=>['Webhook已接收','SMTP已接收','已发送','待确认','发送中'].includes(tracker.value.status))
 async function openTracker(r){trackerId.value=r.id;tracker.value={};trackerOpen.value=true;await reloadTracker()}
 async function reloadTracker(){const id=trackerId.value;if(id==null)return;trackerLoading.value=true;trackerError.value='';try{const d=(await http.get('/tasks/'+id+'/tracker')).data.data;if(id===trackerId.value)tracker.value=d}catch(e){if(id===trackerId.value)trackerError.value=e.response?.data?.detail||e.message}finally{if(id===trackerId.value)trackerLoading.value=false}}
-function recordReply(b){replyForm.value={recipient:b.recipient,subject:'',body:'',received_at:''};replyOpen.value=true}
+function recordReply(b){replyForm.value={recipient:b.recipient,subject:'',body:'',received_at:null};replyOpen.value=true}
 function showReply(r){replyDetail.value=r;replyDetailOpen.value=true}
-async function saveReply(){if(trackerSaving.value)return;const t=replyForm.value.received_at.trim();if(!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(t)||Number.isNaN(Date.parse(t.replace(' ','T')+'+08:00'))){msg.error('请输入正确的北京时间 YYYY-MM-DD HH:mm:ss');return}trackerSaving.value=true;try{await http.post('/tasks/'+trackerId.value+'/tracker/replies',{...replyForm.value,received_at:t.replace(' ','T')+'+08:00'});replyOpen.value=false;msg.success('已登记回复');await reloadTracker();await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
+async function saveReply(){if(trackerSaving.value)return;if(!replyForm.value.received_at){msg.error('请选择实际收到邮件的日期和时间');return}trackerSaving.value=true;try{await http.post('/tasks/'+trackerId.value+'/tracker/replies',{...replyForm.value,received_at:beijingIsoFromPicker(replyForm.value.received_at)});replyOpen.value=false;msg.success('已登记回复');await reloadTracker();await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
 async function toggleClosure(b){if(trackerSaving.value||!confirm((b.closed?'重新打开 ':'确认闭环 ')+b.recipient+'？'))return;trackerSaving.value=true;try{await http.put('/tasks/'+trackerId.value+'/tracker/closure',{recipient:b.recipient,closed:!b.closed});await reloadTracker()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
 const product=()=>({product:'',affected_version:'',upgrade_version:'',vulnerability_impact:''})
 const reference=()=>({name:'',url:''})
 const blankData=()=>({cve_id:'',severity:'',title:'',vulnerability_summary:'',affected_products:[product()],upgrade_recommendation:'',required_actions:'',references:[reference()]})
-const blank=()=>({name:'',data:blankData()})
+const blank=()=>({name:'',deadline:null,data:blankData()})
 const form=ref(blank())
 const levels=['Critical','High','Medium','Low','Unknown'].map(v=>({label:v,value:v}))
 const validCve=computed(()=>/^CVE-\d{4}-\d{4,}$/i.test(form.value.data.cve_id.trim()))
@@ -130,17 +135,21 @@ const settings=ref({skill_id:0,skill_name:'未选择',smtp_ready:false,template_
 const settingsOpen=ref(false),settingsSaving=ref(false),skills=ref([])
 const settingsForm=ref({skill_id:0,template_code:'cve_alert_en'})
 const skillOptions=computed(()=>[{label:'未选择（仅人工填写）',value:0},...skills.value.map(r=>({label:r.name,value:r.id}))])
-const ready=computed(()=>validCve.value && settings.value.smtp_ready && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
+const ready=computed(()=>form.value.deadline!=null && validCve.value && settings.value.smtp_ready && to.value.length>0 && ['severity','title','vulnerability_summary','upgrade_recommendation','required_actions'].every(k=>form.value.data[k].trim()) && form.value.data.affected_products.length>0 && form.value.data.affected_products.every(p=>Object.values(p).every(v=>v.trim())) && form.value.data.references.length>0 && form.value.data.references.every(r=>r.name.trim()&&/^https?:\/\//i.test(r.url)))
 const http=axios.create({baseURL:'/api/v1/mail',timeout:120000})
 http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorage.getItem('token')||'');return c})
 const time=v=>v?new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z').toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'
+// Keep date-picker wall-clock values in Beijing time even if the browser is in another timezone.
+const beijingIsoFromPicker=ms=>{const d=new Date(ms);const pad=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00+08:00`}
+const pickerValueFromBeijing=v=>{if(!v)return null;const d=new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z');const b=new Date(d.getTime()+8*60*60*1000);return new Date(b.getUTCFullYear(),b.getUTCMonth(),b.getUTCDate(),b.getUTCHours(),b.getUTCMinutes()).getTime()}
 const editable=r=>['草稿','待发送','发送失败'].includes(r.status)
 const columns=[
- {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},
- {title:'任务进度',key:'progress',width:310,render:r=>h(NSpace,{size:6,wrap:false},()=>[
+ {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},{title:'截止时间',key:'deadline',width:180,render:r=>time(r.deadline)},
+ {title:'任务进度',key:'progress',width:390,render:r=>h(NSpace,{size:6,wrap:false},()=>[
    h(NTag,{type:'info',bordered:false,size:'small'},()=> '总发送 '+(r.progress?.total_sent??0)),
    h(NTag,{type:'warning',bordered:false,size:'small'},()=> '跟进中 '+(r.progress?.following_up??0)),
-   h(NTag,{type:'success',bordered:false,size:'small'},()=> '已处置 '+(r.progress?.disposed??0))
+   h(NTag,{type:'success',bordered:false,size:'small'},()=> '已处置 '+(r.progress?.disposed??0)),
+   h(NTag,{type:'error',bordered:false,size:'small'},()=> '已超期 '+(r.progress?.overdue??0))
  ])},
  {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>{const accepted=['已发送','SMTP已接收','Webhook已接收'].includes(r.status);return h(NTag,{type:accepted?'success':'default',bordered:false},()=>accepted?'已接收':'未接收')}},
  {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:260,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),h(NButton,{text:true,type:'info',onClick:()=>openTracker(r)},()=> 'Tracker链路'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
@@ -149,10 +158,10 @@ async function load(){loading.value=true;try{let d=(await http.get('/tasks',{par
 function search(){page.value=1;load()}
 function changePage(v){page.value=v;load()}
 function split(v){return (v||'').split(/[,;\s，；]+/).filter(Boolean)}
-async function open(r){if(busy.value)return;editing.value=r?.id??null;evidence.value='';form.value=blank();to.value=[];cc.value=[];if(r){form.value.name=r.name;form.value.data=r.data?JSON.parse(JSON.stringify(r.data)):{...blankData(),cve_id:r.cve||'',title:r.subject||'',vulnerability_summary:r.body||''};to.value=split(r.recipients);cc.value=split(r.cc)}visible.value=true;await loadSettings()}
+async function open(r){if(busy.value)return;editing.value=r?.id??null;evidence.value='';form.value=blank();to.value=[];cc.value=[];if(r){form.value.name=r.name;form.value.deadline=pickerValueFromBeijing(r.deadline);form.value.data=r.data?JSON.parse(JSON.stringify(r.data)):{...blankData(),cve_id:r.cve||'',title:r.subject||'',vulnerability_summary:r.body||''};to.value=split(r.recipients);cc.value=split(r.cc)}visible.value=true;await loadSettings()}
 async function generate(){if(!validCve.value||busy.value)return;if(!confirm('AI生成结果将填充并替换当前情报字段，是否继续？'))return;generating.value=true;try{const data=(await http.post('/generate',{cve:form.value.data.cve_id,evidence:evidence.value})).data.data;form.value.data=data;msg.success('AI已填充，请人工核实和修改')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{generating.value=false}}
 async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!confirm('确认向 '+to.value.join('; ')+' 发送该邮件？'))return;saving.value=true;try{
-  const payload={...form.value,recipients:to.value.join(';'),cc:cc.value.join(';')};
+  const payload={...form.value,deadline:form.value.deadline?beijingIsoFromPicker(form.value.deadline):null,recipients:to.value.join(';'),cc:cc.value.join(';')};
   const response=editing.value?await http.put('/drafts/'+editing.value,payload):await http.post('/drafts',payload);
   editing.value=response.data.data.id;
   if(send){sending.value=true;const r=(await http.post('/tasks/'+editing.value+'/send')).data.data;visible.value=false;if(r.status==='Webhook已接收')msg.success('Webhook已接收任务，请在微软流确认正式邮件发送结果');else msg.warning(r.last_error||r.status)}
