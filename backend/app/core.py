@@ -637,6 +637,9 @@ app.include_router(email_router)
 from .mail_tasks import router as mail_router
 app.include_router(mail_router)
 
+from .waf_block import router as waf_router
+app.include_router(waf_router)
+
 @app.get("/api/v1/scheduler/status",dependencies=[Depends(auth)])
 def get_scheduler_status():
     from .scheduler import scheduler_status

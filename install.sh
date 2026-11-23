@@ -15,4 +15,12 @@ if [ ! -f backend/.env ]; then
 else
   echo "Existing backend/.env preserved."
 fi
+
+# Add WAF S3 settings without overwriting existing credentials.
+for key in S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY S3_SESSION_TOKEN; do
+  if ! grep -q "^${key}=" backend/.env; then
+    printf '%s=\n' "$key" >> backend/.env
+  fi
+done
+chmod 600 backend/.env
 echo "Installation complete. Run ./start.sh"
