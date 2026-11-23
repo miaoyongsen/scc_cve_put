@@ -36,7 +36,7 @@
       <n-form-item label="抄送（选填）"><n-dynamic-tags v-model:value="cc" :input-props="{placeholder:'输入邮箱后回车'}"/></n-form-item>
     </n-form>
     <n-space justify="end" style="margin-top:16px">
-      <n-button :disabled="busy" @click="visible=false">取消</n-button><n-button :disabled="busy" :loading="saving" @click="save(false)">保存草稿</n-button><n-button :disabled="busy" @click="previewOpen=true">邮件预览</n-button><n-button type="primary" :disabled="busy||!ready" :loading="sending" @click="save(true)">确认发送</n-button>
+      <n-button :disabled="busy" @click="visible=false">取消</n-button><n-button :disabled="busy||!form.deadline" :loading="saving" @click="save(false)">保存草稿</n-button><n-button :disabled="busy" @click="previewOpen=true">邮件预览</n-button><n-button type="primary" :disabled="busy||!ready" :loading="sending" @click="save(true)">确认发送</n-button>
     </n-space>
   </n-modal>
   <n-modal v-model:show="settingsOpen" preset="card" title="邮件 AI 配置" style="width:min(650px,95vw)" :mask-closable="false">
@@ -160,7 +160,7 @@ function changePage(v){page.value=v;load()}
 function split(v){return (v||'').split(/[,;\s，；]+/).filter(Boolean)}
 async function open(r){if(busy.value)return;editing.value=r?.id??null;evidence.value='';form.value=blank();to.value=[];cc.value=[];if(r){form.value.name=r.name;form.value.deadline=pickerValueFromBeijing(r.deadline);form.value.data=r.data?JSON.parse(JSON.stringify(r.data)):{...blankData(),cve_id:r.cve||'',title:r.subject||'',vulnerability_summary:r.body||''};to.value=split(r.recipients);cc.value=split(r.cc)}visible.value=true;await loadSettings()}
 async function generate(){if(!validCve.value||busy.value)return;if(!confirm('AI生成结果将填充并替换当前情报字段，是否继续？'))return;generating.value=true;try{const data=(await http.post('/generate',{cve:form.value.data.cve_id,evidence:evidence.value})).data.data;form.value.data=data;msg.success('AI已填充，请人工核实和修改')}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{generating.value=false}}
-async function save(send){if(busy.value||send&&!ready.value)return;if(send&&!confirm('确认向 '+to.value.join('; ')+' 发送该邮件？'))return;saving.value=true;try{
+async function save(send){if(busy.value||send&&!ready.value)return;if(!form.value.deadline){msg.error('请选择任务截止日期和时间');return}if(send&&!confirm('确认向 '+to.value.join('; ')+' 发送该邮件？'))return;saving.value=true;try{
   const payload={...form.value,deadline:form.value.deadline?beijingIsoFromPicker(form.value.deadline):null,recipients:to.value.join(';'),cc:cc.value.join(';')};
   const response=editing.value?await http.put('/drafts/'+editing.value,payload):await http.post('/drafts',payload);
   editing.value=response.data.data.id;
