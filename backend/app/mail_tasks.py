@@ -247,8 +247,13 @@ def delete_task(id:int):
     with Session(engine) as db:
         row=get_row(db,MailTask,id)
         if row.status=="发送中":raise HTTPException(409,"发送中不能删除")
+        active_reminder=db.scalar(select(TrackerReminder.id).where(
+            TrackerReminder.task_id==id,TrackerReminder.status=="发送中").limit(1))
+        if active_reminder:
+            raise HTTPException(409,"超期提醒发送中，暂时不能删除")
         db.execute(delete(TrackerReply).where(TrackerReply.task_id==id))
         db.execute(delete(TrackerClosure).where(TrackerClosure.task_id==id))
+        db.execute(delete(TrackerReminder).where(TrackerReminder.task_id==id))
         db.delete(row);db.commit()
     return {"code":0}
 
