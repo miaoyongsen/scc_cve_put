@@ -49,6 +49,9 @@ const groups = [
   { key: 'mail', label: '邮件推送', children: [
     { label: '邮件推送列表', path: '/mail-tasks' }
   ] },
+  { key: 'protection', label: '基础防护', children: [
+    { label: 'WAF封禁', path: '/waf-block' }
+  ] },
   { key: 'common', label: '公共配置', children: [
     { label: 'AI配置', path: '/ai-settings' },
     { label: 'Skill配置', path: '/skill-settings' },
