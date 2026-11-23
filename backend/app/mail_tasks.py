@@ -187,7 +187,27 @@ def tasks(q:str="",page:int=1,size:int=20):
         if q:stmt=stmt.where(MailTask.name.contains(q) | MailTask.cve.contains(q) | MailTask.subject.contains(q) | MailTask.recipients.contains(q))
         count=db.scalar(select(func.count()).select_from(stmt.subquery()))
         rows=db.scalars(stmt.order_by(MailTask.id.desc()).offset((page-1)*size).limit(size)).all()
-        return {"code":0,"data":{"total":count,"list":[dto(r) for r in rows]}}
+        ids=[r.id for r in rows]
+        closures=db.execute(
+            select(TrackerClosure.task_id,TrackerClosure.recipient).where(
+                TrackerClosure.task_id.in_(ids),TrackerClosure.closed==1
+            )
+        ).all() if ids else []
+        closed_by_task={}
+        for task_id,recipient in closures:
+            closed_by_task.setdefault(task_id,set()).add(recipient.lower())
+        items=[]
+        for row in rows:
+            entry=dto(row)
+            # Counts are per distinct To recipient; CC is excluded. A webhook
+            # acknowledgment is submission, not proof of Outlook delivery.
+            sent=row.status in ("Webhook已接收","SMTP已接收","已发送")
+            recipients=set(tracker_recipients(row)) if sent else set()
+            disposed=len(recipients & closed_by_task.get(row.id,set()))
+            entry["progress"]={"total_sent":len(recipients),
+                "following_up":len(recipients)-disposed,"disposed":disposed}
+            items.append(entry)
+        return {"code":0,"data":{"total":count,"list":items}}
 
 @router.post("/tasks")
 def create_task(body:TaskInput):
