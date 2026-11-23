@@ -47,6 +47,7 @@ class MailTask(Base):
     status: Mapped[str]=mapped_column(String(30),default="草稿")
     data_json: Mapped[str]=mapped_column(Text,default="")
     sent_at: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
+    deadline: Mapped[Optional[datetime]]=mapped_column(DateTime(timezone=True),nullable=True)
     last_error: Mapped[str]=mapped_column(Text,default="")
     created_at: Mapped[datetime]=mapped_column(DateTime(timezone=True),default=lambda:datetime.now(timezone.utc))
 
@@ -74,7 +75,7 @@ class TrackerClosure(Base):
 Base.metadata.create_all(engine)
 for table, columns in {
     "mail_templates": {"flow_url":"TEXT DEFAULT ''", "template_code":"VARCHAR(100) DEFAULT 'cve_alert_en'", "ai_prompt":"TEXT DEFAULT ''","skill_id":"INTEGER NOT NULL DEFAULT 0"},
-    "mail_tasks": {"data_json":"TEXT DEFAULT ''","sent_at":"DATETIME","last_error":"TEXT DEFAULT ''"},
+    "mail_tasks": {"data_json":"TEXT DEFAULT ''","sent_at":"DATETIME","deadline":"DATETIME","last_error":"TEXT DEFAULT ''"},
 }.items():
     existing={c["name"] for c in inspect(engine).get_columns(table)}
     with engine.begin() as conn:
@@ -157,6 +158,7 @@ class TaskInput(BaseModel):
     subject: str=Field(min_length=1)
     body: str=Field(min_length=1)
     template_id: Optional[int]=None
+    deadline: datetime
 
 def dto(row):
     result={c.name:getattr(row,c.name) for c in row.__table__.columns}
@@ -169,6 +171,8 @@ def dto(row):
 
 def validate(body):
     values=body.model_dump()
+    if values.get("deadline") is not None and values["deadline"].tzinfo is None:
+        raise HTTPException(422,"截止时间必须包含时区")
     for key in ("name","subject","body","recipients"):
         if key in values and not values[key].strip():
             raise HTTPException(422,"必填字段不能为空")
@@ -204,8 +208,13 @@ def tasks(q:str="",page:int=1,size:int=20):
             sent=row.status in ("Webhook已接收","SMTP已接收","已发送")
             recipients=set(tracker_recipients(row)) if sent else set()
             disposed=len(recipients & closed_by_task.get(row.id,set()))
+            unresolved=max(len(recipients)-disposed,0)
+            deadline=row.deadline
+            if deadline is not None and deadline.tzinfo is None:
+                deadline=deadline.replace(tzinfo=timezone.utc)
+            overdue=unresolved if sent and deadline is not None and datetime.now(timezone.utc)>deadline else 0
             entry["progress"]={"total_sent":len(recipients),
-                "following_up":len(recipients)-disposed,"disposed":disposed}
+                "following_up":unresolved-overdue,"disposed":disposed,"overdue":overdue}
             items.append(entry)
         return {"code":0,"data":{"total":count,"list":items}}
 
@@ -260,6 +269,7 @@ class DraftInput(BaseModel):
     recipients: str=""
     cc: str=""
     data: AlertData
+    deadline: datetime
 
 class GenerateInput(BaseModel):
     cve: str
@@ -295,6 +305,9 @@ def validate_delivery(data, to, cc):
         raise HTTPException(422,"请检查收件人与抄送邮箱格式")
 
 def apply_draft(row,body):
+    if body.deadline.tzinfo is None:
+        raise HTTPException(422,"截止时间必须包含时区")
+    row.deadline=body.deadline.astimezone(timezone.utc)
     row.name=body.name.strip() or body.data.title.strip() or body.data.cve_id or "未命名邮件任务"
     row.cve=body.data.cve_id.strip().upper()
     row.recipients=body.recipients
@@ -433,13 +446,13 @@ def tracker(id:int):
             branches.append({"recipient":recipient,"replies":items,"closed":bool(closure and closure.closed),
                 "closed_at":closure.closed_at if closure and closure.closed else None})
         return {"code":0,"data":{"task_id":"SCC-MAIL-"+str(id),"id":id,"subject":row.subject,
-            "cve":row.cve,"status":row.status,"sent_at":row.sent_at,"recipients":branches}}
+            "cve":row.cve,"status":row.status,"sent_at":row.sent_at,"deadline":row.deadline,"recipients":branches}}
 
 class TrackerReplyInput(BaseModel):
     recipient: str=Field(min_length=1,max_length=255)
     body: str=Field(min_length=1,max_length=100000)
     subject: str=Field(default="",max_length=2000)
-    received_at: Optional[datetime]=None
+    received_at: datetime
     message_id: str=Field(default="",max_length=512)
 
 @router.post("/tasks/{id}/tracker/replies")
@@ -452,9 +465,7 @@ def add_tracker_reply(id:int, body:TrackerReplyInput):
         if not body.body.strip():
             raise HTTPException(422,"回复内容不能为空")
         message_id=body.message_id.strip() or "manual:"+uuid.uuid4().hex
-        if body.message_id.strip() and body.received_at is None:
-            raise HTTPException(422,"自动回传必须提供实际收到邮件的时间")
-        received=body.received_at or datetime.now(timezone.utc)
+        received=body.received_at
         if received.tzinfo is None:
             raise HTTPException(422,"回复时间必须包含时区")
         received=received.astimezone(timezone.utc)
