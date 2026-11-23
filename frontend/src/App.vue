@@ -57,7 +57,7 @@ const groups = [
 ]
 const isMobile = () => window.matchMedia('(max-width: 760px)').matches
 const sidebarOpen = ref(!isMobile() && localStorage.getItem('scc-sidebar-open') !== 'false')
-const expanded = reactive({ cve: false, msoc: false, mail: false, common: false })
+const expanded = reactive({ cve: false, msoc: false, mail: false, protection: false, common: false })
 function toggleSidebar() {
   sidebarOpen.value = !sidebarOpen.value
   if (!isMobile()) localStorage.setItem('scc-sidebar-open', String(sidebarOpen.value))
