@@ -115,7 +115,7 @@ async function openTracker(r){trackerId.value=r.id;tracker.value={};trackerOpen.
 async function reloadTracker(){const id=trackerId.value;if(id==null)return;trackerLoading.value=true;trackerError.value='';try{const d=(await http.get('/tasks/'+id+'/tracker')).data.data;if(id===trackerId.value)tracker.value=d}catch(e){if(id===trackerId.value)trackerError.value=e.response?.data?.detail||e.message}finally{if(id===trackerId.value)trackerLoading.value=false}}
 function recordReply(b){replyForm.value={recipient:b.recipient,subject:'',body:'',received_at:''};replyOpen.value=true}
 function showReply(r){replyDetail.value=r;replyDetailOpen.value=true}
-async function saveReply(){if(trackerSaving.value)return;const t=replyForm.value.received_at.trim();if(!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(t)||Number.isNaN(Date.parse(t.replace(' ','T')+'+08:00'))){msg.error('请输入正确的北京时间 YYYY-MM-DD HH:mm:ss');return}trackerSaving.value=true;try{await http.post('/tasks/'+trackerId.value+'/tracker/replies',{...replyForm.value,received_at:t.replace(' ','T')+'+08:00'});replyOpen.value=false;msg.success('已登记回复');await reloadTracker()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
+async function saveReply(){if(trackerSaving.value)return;const t=replyForm.value.received_at.trim();if(!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(t)||Number.isNaN(Date.parse(t.replace(' ','T')+'+08:00'))){msg.error('请输入正确的北京时间 YYYY-MM-DD HH:mm:ss');return}trackerSaving.value=true;try{await http.post('/tasks/'+trackerId.value+'/tracker/replies',{...replyForm.value,received_at:t.replace(' ','T')+'+08:00'});replyOpen.value=false;msg.success('已登记回复');await reloadTracker();await load()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
 async function toggleClosure(b){if(trackerSaving.value||!confirm((b.closed?'重新打开 ':'确认闭环 ')+b.recipient+'？'))return;trackerSaving.value=true;try{await http.put('/tasks/'+trackerId.value+'/tracker/closure',{recipient:b.recipient,closed:!b.closed});await reloadTracker()}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{trackerSaving.value=false}}
 const product=()=>({product:'',affected_version:'',upgrade_version:'',vulnerability_impact:''})
 const reference=()=>({name:'',url:''})
@@ -136,7 +136,12 @@ http.interceptors.request.use(c=>{c.headers.Authorization='Bearer '+(localStorag
 const time=v=>v?new Date(/[zZ]$|[+-][0-9]{2}:[0-9]{2}$/.test(v)?v:v+'Z').toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}):'—'
 const editable=r=>['草稿','待发送','发送失败'].includes(r.status)
 const columns=[
- {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},{title:'邮件主题',key:'subject',minWidth:230,ellipsis:{tooltip:true}},
+ {title:'ID',key:'id',width:65},{title:'任务名称',key:'name',minWidth:160},{title:'CVE',key:'cve',width:155},
+ {title:'任务进度',key:'progress',width:310,render:r=>h(NSpace,{size:6,wrap:false},()=>[
+   h(NTag,{type:'info',bordered:false,size:'small'},()=> '总发送 '+(r.progress?.total_sent??0)),
+   h(NTag,{type:'warning',bordered:false,size:'small'},()=> '跟进中 '+(r.progress?.following_up??0)),
+   h(NTag,{type:'success',bordered:false,size:'small'},()=> '已处置 '+(r.progress?.disposed??0))
+ ])},
  {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收','Webhook已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
  {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:260,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),h(NButton,{text:true,type:'info',onClick:()=>openTracker(r)},()=> 'Tracker链路'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
 ]
