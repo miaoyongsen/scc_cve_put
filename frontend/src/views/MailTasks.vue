@@ -142,7 +142,7 @@ const columns=[
    h(NTag,{type:'warning',bordered:false,size:'small'},()=> '跟进中 '+(r.progress?.following_up??0)),
    h(NTag,{type:'success',bordered:false,size:'small'},()=> '已处置 '+(r.progress?.disposed??0))
  ])},
- {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>h(NTag,{type:['已发送','SMTP已接收','Webhook已接收'].includes(r.status)?'success':r.status==='发送失败'?'error':'warning'},()=>r.status)},
+ {title:'收件人',key:'recipients',minWidth:180,ellipsis:{tooltip:true}},{title:'状态',key:'status',width:95,render:r=>{const accepted=['已发送','SMTP已接收','Webhook已接收'].includes(r.status);return h(NTag,{type:accepted?'success':'default',bordered:false},()=>accepted?'已接收':'未接收')}},
  {title:'创建时间',key:'created_at',width:180,render:r=>time(r.created_at)},{title:'操作',key:'action',width:260,render:r=>h(NSpace,{size:8},()=>[h(NButton,{text:true,type:'primary',onClick:()=>view(r)},()=> '查看'),h(NButton,{text:true,type:'info',onClick:()=>openTracker(r)},()=> 'Tracker链路'),editable(r)?h(NButton,{text:true,type:'primary',onClick:()=>open(r)},()=> '编辑'):null,h(NButton,{text:true,type:'error',disabled:r.status==='发送中',onClick:()=>remove(r)},()=> '删除')])}
 ]
 async function load(){loading.value=true;try{let d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total;if(page.value>Math.max(1,Math.ceil(total.value/20))){page.value=Math.max(1,Math.ceil(total.value/20));d=(await http.get('/tasks',{params:{q:q.value,page:page.value,size:20}})).data.data;total.value=d.total}rows.value=d.list}catch(e){msg.error(e.response?.data?.detail||e.message)}finally{loading.value=false}}
