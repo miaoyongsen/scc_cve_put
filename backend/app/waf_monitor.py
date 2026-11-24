@@ -152,7 +152,8 @@ def notify_terminal():
         config=get_config(db)
         candidates=db.scalars(
             select(WafBlockRequest).where(
-                func.lower(WafBlockRequest.status).in_(TERMINAL_SUCCESS + TERMINAL_FAILURE)
+                func.lower(WafBlockRequest.status).in_(TERMINAL_SUCCESS + TERMINAL_FAILURE),
+                WafBlockRequest.client_request_id.not_in(select(WafNotification.request_id))
             ).order_by(WafBlockRequest.id).limit(500)
         ).all()
         for row in candidates:
