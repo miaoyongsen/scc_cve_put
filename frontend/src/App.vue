@@ -50,7 +50,8 @@ const groups = [
     { label: '邮件推送列表', path: '/mail-tasks' }
   ] },
   { key: 'protection', label: '基础防护', children: [
-    { label: 'WAF封禁', path: '/waf-block' }
+    { label: 'WAF封禁', path: '/waf-block' },
+    { label: 'WAF推送配置', path: '/waf-push-settings' }
   ] },
   { key: 'common', label: '公共配置', children: [
     { label: 'AI配置', path: '/ai-settings' },
