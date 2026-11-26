@@ -21,7 +21,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint, Index, select, func
+from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint, Index, select, func, inspect, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .core import Base, engine, auth
@@ -32,6 +32,14 @@ DEFAULT_DB_PATH = "/home/msocadmin/SCC_TT/data/webhook.db"
 ALLOWED_INTERVALS = (1, 3, 5, 10, 15, 30)
 MAX_MESSAGE_BYTES = 3800
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
+TEMPLATE_FIELDS = ("ticket_identifier", "priority", "cause", "escalation", "disposal", "ticket_url", "ticket_link", "id", "month", "received_at")
+SAMPLE_ALERT = {
+    "escalation": "AWS_Guardduty_Guardduty Findings - 172.24.254.254",
+    "cause": "Escalated", "priority": "Medium", "ticket_url": "",
+    "ticket_identifier": "300-205029",
+    "disposal": "告警详情：\\n告警标题：An EC2 instance is communicating with a remote host on an unusual server port.\\n源地址IP：172.24.254.245\\n远程IP：39.96.62.230\\n\\n告警分析：\\nGuardDuty 检测到异常端口通信。\\n\\n建议：\\n请确认该通信是否为授权操作。"
+}
 
 _send_lock = threading.Lock()
 _last_send_started = 0.0
@@ -59,6 +67,7 @@ class MSOCConfig(Base):
     poll_interval: Mapped[int] = mapped_column(Integer, default=3)
     wecom_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     wecom_webhook: Mapped[str] = mapped_column(String(1000), default="")
+    message_template: Mapped[str] = mapped_column(Text, default=DEFAULT_MESSAGE_TEMPLATE)
     error_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     error_webhook: Mapped[str] = mapped_column(String(1000), default="")
     # Retained for compatibility with the first version; no longer used as a cursor.
@@ -95,6 +104,9 @@ class MSOCDelivery(Base):
 
 # Creates the new MSOC delivery table in SCC_CVE's database.
 Base.metadata.create_all(engine)
+if "message_template" not in {col["name"] for col in inspect(engine).get_columns("msoc_monitor_config")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE msoc_monitor_config ADD COLUMN message_template TEXT"))
 
 
 def _now_dt():
@@ -127,6 +139,7 @@ def _config_data(row):
         "poll_interval": row.poll_interval,
         "wecom_enabled": bool(row.wecom_enabled),
         "has_wecom_webhook": bool(row.wecom_webhook),
+        "message_template": row.message_template if row.message_template is not None else DEFAULT_MESSAGE_TEMPLATE,
         "error_enabled": bool(row.error_enabled),
         "has_error_webhook": bool(row.error_webhook),
         "last_query": row.last_query,
@@ -382,29 +395,60 @@ def _capture_records(source_db, records, include_unsent=True):
     return captured, unsent
 
 
-def _format_delivery(row):
-    raw = row["content"]
+def _normalize_template(value):
+    # Convert templates written with a literal backslash-n to line breaks.
+    return str(value).replace("\\n", "\n")
+
+
+def _validate_template(value):
+    if not isinstance(value, str) or not value.strip() or len(value) > 8000:
+        raise HTTPException(422, "MSOC 企业微信模板不能为空或超过 8000 字符")
+    unknown = set(re.findall(r"(?<!{){([a-zA-Z_][a-zA-Z0-9_]*)}(?!})", value)) - set(TEMPLATE_FIELDS)
+    if unknown:
+        raise HTTPException(422, "模板存在不支持的变量：" + ", ".join(sorted(unknown)))
+    return _normalize_template(value)
+
+
+def _cut_bytes(value, size):
+    encoded = value.encode("utf-8")
+    if len(encoded) <= size:
+        return value
+    suffix = "\n……（内容过长，请在 SCC 的 MSOC 日志查看完整内容）"
+    head = encoded[:max(0, size - len(suffix.encode("utf-8")))].decode("utf-8", "ignore")
+    return head + suffix
+
+
+def _format_delivery(row, template=DEFAULT_MESSAGE_TEMPLATE):
     try:
-        raw = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
-    except Exception:
-        raw = str(raw)
-    raw_bytes = raw.encode("utf-8")
-    if len(raw_bytes) > 2100:
-        raw = raw_bytes[:2100].decode("utf-8", "ignore") + "\n……（内容过长，完整内容请在 MSOC 日志页面查看）"
-    return (
-        "### 日志 #" + str(row["source_id"]) + " · " + row["source_month"] + "\n"
-        "> **接收时间**：" + (row["received_at"] or "未知") + "\n"
-        "JSON 原文：\n" + raw
-    )
+        parsed = json.loads(row["content"])
+        values = parsed if isinstance(parsed, dict) else {}
+    except (ValueError, TypeError):
+        values = {}
+    url = str(values.get("ticket_url") or "").strip()
+    # Do not create clickable links for arbitrary schemes.
+    link = "[查看工单](" + url + ")" if url.startswith(("https://", "http://")) else ""
+    fields = {key: str(values.get(key) or "") for key in TEMPLATE_FIELDS}
+    fields.update({
+        "id": str(row["source_id"]),
+        "month": str(row["source_month"]),
+        "received_at": str(row["received_at"] or "未知"),
+        "ticket_link": link,
+    })
+    # The original JSON is still stored intact in msoc_delivery_records.
+    # Replacement does not recursively interpret braces from source data.
+    result = _normalize_template(template)
+    result = re.sub(r"(?<!{){([a-zA-Z_][a-zA-Z0-9_]*)}(?!})",
+                    lambda match: fields.get(match.group(1), match.group(0)), result)
+    return _cut_bytes(result, 3000)
 
 
-def _send_deliveries(deliveries, webhook):
+def _send_deliveries(deliveries, webhook, template=DEFAULT_MESSAGE_TEMPLATE):
     """Send only unsent records from this poll's current time window."""
     if not deliveries:
         return 0
     groups, current, current_bytes = [], [], 0
     for row in deliveries:
-        item = _format_delivery(row)
+        item = _format_delivery(row, template)
         item_bytes = len(item.encode("utf-8"))
         if current and (len(current) >= 4 or current_bytes + item_bytes > MAX_MESSAGE_BYTES - 200):
             groups.append(current)
@@ -474,7 +518,7 @@ def _poll_once_impl():
     if config.wecom_enabled:
         if not config.wecom_webhook:
             raise RuntimeError("正常推送已启用，但尚未配置企业微信 Webhook")
-        pushed = _send_deliveries(unsent, config.wecom_webhook)
+        pushed = _send_deliveries(unsent, config.wecom_webhook, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE)
 
     counts = _delivery_counts(source_db)
     return {
@@ -558,6 +602,7 @@ def wake_monitor():
 
 
 class MSOCConfigInput(BaseModel):
+    message_template: str = Field(default=DEFAULT_MESSAGE_TEMPLATE, max_length=8000)
     enabled: bool = False
     db_path: str = Field(default=DEFAULT_DB_PATH, min_length=1, max_length=1000)
     poll_interval: int = 3
@@ -586,6 +631,7 @@ def put_config(body: MSOCConfigInput):
         raise HTTPException(422, "查询间隔仅支持 1、3、5、10、15、30 分钟")
     _validate_webhook(body.wecom_webhook, "正常推送：")
     _validate_webhook(body.error_webhook, "异常告警：")
+    template = _validate_template(body.message_template)
     with Session(engine) as db:
         row = db.get(MSOCConfig, 1)
         if row is None:
@@ -596,6 +642,7 @@ def put_config(body: MSOCConfigInput):
         row.poll_interval = body.poll_interval
         row.wecom_enabled = body.wecom_enabled
         row.error_enabled = body.error_enabled
+        row.message_template = template
         if body.wecom_webhook:
             row.wecom_webhook = body.wecom_webhook
         if body.error_webhook:
@@ -631,7 +678,10 @@ def test_normal_push():
     try:
         _send_markdown(
             config.wecom_webhook,
-            "## MSOC 正常推送测试\n> **状态**：连接成功\n> **时间**：" + _now(),
+            "## MSOC 模板测试（示例数据）\n\n" + _format_delivery({
+                "source_id": 123, "source_month": _now_dt().strftime("%Y%m"),
+                "received_at": _now(), "content": json.dumps(SAMPLE_ALERT, ensure_ascii=False),
+            }, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE),
         )
     except Exception as exc:
         raise HTTPException(502, str(exc)[:500])
