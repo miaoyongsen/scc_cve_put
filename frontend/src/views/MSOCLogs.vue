@@ -30,7 +30,7 @@
         :loading="loading"
         :pagination="false"
         :row-key="r=>r.id"
-        :scroll-x="1300"
+        :scroll-x="1400"
       />
       <n-space justify="end" style="margin-top:14px">
         <n-pagination v-model:page="page" :page-size="size" :item-count="total" show-quick-jumper @update:page="load"/>
@@ -79,6 +79,7 @@ const page=ref(1)
 const size=ref(30)
 const total=ref(0)
 const loading=ref(false)
+const pushingId=ref(null)
 const visible=ref(false)
 const detail=ref({})
 const counts=ref({total_records:0,sent_records:0,unsent_records:0})
@@ -109,8 +110,13 @@ const columns=[
     render:r=>h('div',{class:'msoc-content-preview'},r.content||'—')
   },
   {
-    title:'操作',key:'action',width:100,
-    render:r=>h(NButton,{size:'small',type:'primary',onClick:()=>openDetail(r)},()=> '查看详情')
+    title:'操作',key:'action',width:190,
+    render:r=>h(NSpace,{size:8,wrap:false},()=>[
+      h(NButton,{size:'small',type:'primary',onClick:()=>openDetail(r)},()=> '查看详情'),
+      h(NButton,{size:'small',type:'warning',loading:pushingId.value===r.id,
+        disabled:pushingId.value!==null,
+        onClick:()=>manualPush(r)},()=> '手动推送')
+    ])
   }
 ]
 
@@ -154,6 +160,21 @@ function reset(){
   keyword.value=''
   page.value=1
   load()
+}
+async function manualPush(r){
+  if(pushingId.value!==null)return
+  const target='日志 #'+r.source_id+'（'+r.source_month+'）'
+  if(!window.confirm('确认再次推送 '+target+' 到 MSOC 正常企业微信机器人？\\n历史已发送的日志也会再次发送。'))return
+  pushingId.value=r.id
+  try{
+    await api.post('/logs/'+r.source_month+'/'+r.id+'/push')
+    msg.success(target+' 手动推送成功')
+    await load()
+  }catch(e){
+    msg.error(e.response?.data?.detail||e.message||'手动推送失败')
+  }finally{
+    pushingId.value=null
+  }
 }
 async function openDetail(r){
   try{
