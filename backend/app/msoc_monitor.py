@@ -920,7 +920,7 @@ _manual_push_lock = threading.Lock()
 @router.post("/logs/{month}/{record_id}/push")
 def manually_push_log(month: str, record_id: int):
     """Explicit operator action: send one saved log even if previously sent."""
-    if not re.fullmatch(r"20\\d{4}", month):
+    if not re.fullmatch(r"20\d{4}", month):
         raise HTTPException(422, "月份格式应为 YYYYMM")
     if not _manual_push_lock.acquire(blocking=False):
         raise HTTPException(409, "另一条手动推送正在执行，请稍后再试")
