@@ -144,7 +144,12 @@ const templatePreview=computed(()=>{
   const raw=form.value.message_template||''
   const fields={...exampleAlert,id:'123',month:'202611',received_at:'2026-11-26 09:00:00',
     ticket_link:exampleAlert.ticket_url?'[查看工单]('+exampleAlert.ticket_url+')':''}
-  return raw.replace(/\\n/g,'\n').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(fields,key)?String(fields[key]):match)
+  const rendered=raw.replace(/\\n/g,'\n').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(fields,key)?String(fields[key]):match)
+  const encoded=new TextEncoder().encode(rendered)
+  if(encoded.length<=3000)return rendered
+  const suffix='\n……（内容过长，请在 SCC 的 MSOC 日志查看完整内容）'
+  const limit=3000-new TextEncoder().encode(suffix).length
+  return new TextDecoder().decode(encoded.slice(0,limit))+suffix
 })
 function resetTemplate(){form.value.message_template=defaultMessageTemplate}
 const saving=ref(false)
