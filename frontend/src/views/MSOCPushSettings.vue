@@ -63,6 +63,22 @@
       </n-space>
     </n-card>
 
+    <n-card title="企业微信推送模板" style="margin-top:16px">
+      <n-alert type="info" style="margin-bottom:12px">
+        与 CVE 推送模板相同，支持 Markdown、变量替换和实时预览。可用变量：
+        {id} 日志 ID、{month} 来源月份、{received_at} 接收时间、{content} 原始 JSON。
+        支持直接回车换行。模板只影响后续新消息，不会补推历史数据。
+      </n-alert>
+      <n-input v-model:value="form.message_template" type="textarea" :rows="10"
+        placeholder="输入企业微信 Markdown 推送模板" />
+      <n-space style="margin-top:12px">
+        <n-button type="primary" :loading="saving" @click="save">保存推送模板</n-button>
+        <n-button @click="resetTemplate">恢复默认模板（需保存）</n-button>
+      </n-space>
+      <h3>实时预览</h3>
+      <pre class="template-preview">{{templatePreview}}</pre>
+    </n-card>
+
     <n-card title="异常告警机器人" style="margin-top:16px">
       <n-alert type="warning" style="margin-bottom:12px">
         数据库不可访问、查询失败、正常推送失败时，使用此独立机器人发送异常告警。同一异常 15 分钟内最多告警一次，避免故障时刷屏。
@@ -105,7 +121,7 @@
 </template>
 
 <script setup>
-import {ref,onMounted,onUnmounted} from 'vue'
+import {ref,computed,onMounted,onUnmounted} from 'vue'
 import axios from 'axios'
 import {
   NAlert,NButton,NCard,NDescriptions,NDescriptionsItem,NFormItem,NGrid,NGridItem,
@@ -125,6 +141,14 @@ const testingError=ref(false)
 const testingDb=ref(false)
 const polling=ref(false)
 const exporting=ref(false)
+const defaultTemplate='### 日志 #{id} · {month}\n> **接收时间**：{received_at}\nJSON 原文：\n{content}'
+const templatePreview=computed(()=>{
+  const sample={id:'123',month:'202611',received_at:'2026-11-26T09:00:00+08:00',content:'{"disposal":"处理中","priority":"high","ticket_identifier":"MSOC-123"}'}
+  let result=String(form.value.message_template||'').replace(/\\\\n/g,'\n')
+  for(const [key,val] of Object.entries(sample))result=result.split('{'+key+'}').join(val)
+  return result
+})
+function resetTemplate(){form.value.message_template=defaultTemplate}
 const exportCount=ref(100)
 const exportOptions=[10,50,100,200,1000].map(n=>({label:`最近 ${n} 条`,value:n}))
 const form=ref({
@@ -133,6 +157,7 @@ const form=ref({
   poll_interval:3,
   wecom_enabled:false,
   wecom_webhook:'',
+  message_template:defaultTemplate,
   error_enabled:false,
   error_webhook:''
 })
@@ -249,5 +274,5 @@ onUnmounted(()=>{
 </script>
 
 <style scoped>
-.page{max-width:1050px;margin:30px auto;padding:20px}
+.page{max-width:1050px;margin:30px auto;padding:20px}.template-preview{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7fa;padding:16px;border-radius:6px;max-height:420px;overflow:auto}
 </style>
