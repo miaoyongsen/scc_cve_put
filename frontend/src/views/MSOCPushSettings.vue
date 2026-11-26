@@ -65,8 +65,8 @@
 
     <n-card title="企业微信推送模板" style="margin-top:16px">
       <n-alert type="info" style="margin-bottom:12px">
-        推送内容由此模板控制。可用变量：{ticket_identifier}、{priority}、{cause}、{escalation}、{disposal}、{ticket_url}、{ticket_link}、{id}、{month}、{received_at}。
-        {disposal} 保留原始内容和换行；{ticket_link} 在工单 URL 为空时不显示。仅影响后续新推送，不补推历史日志。
+        推送内容由此模板控制。可用变量：{ticket_identifier} 工单号、{priority} 等级、{cause} 状态、{escalation} 类型、{alert_detail} 告警详情、{analysis} 分析、{recommendation} 建议；也支持 {disposal} 原始详情、{ticket_url}、{ticket_link}、{id}、{month}、{received_at}。
+        会自动整理日志中的换行和“告警详情 / 告警分析 / 建议”段落；没有该段落时展示“未提供”。{ticket_link} 在工单 URL 为空时不显示。只影响后续新推送。
       </n-alert>
       <n-input v-model:value="form.message_template" type="textarea" :rows="12" maxlength="8000" show-count placeholder="输入 Markdown 模板"/>
       <n-space style="margin-top:12px">
@@ -134,17 +134,31 @@ api.interceptors.request.use(c=>{
   return c
 })
 
-const defaultMessageTemplate="## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
+const defaultMessageTemplate="## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n{ticket_link}"
 const exampleAlert={
   escalation:'AWS_Guardduty_Guardduty Findings - 172.24.254.254',
   cause:'Escalated',priority:'Medium',ticket_url:'',ticket_identifier:'300-205029',
   disposal:'告警详情：\n告警标题：An EC2 instance is communicating with a remote host on an unusual server port.\n源地址IP：172.24.254.245\n远程IP：39.96.62.230\n\n告警分析：\nGuardDuty 检测到异常端口通信。\n\n建议：\n请确认该通信是否为授权操作。'
 }
+function normalizeNewlines(value){return String(value??'').replace(/\\+n/g,'\n')}
+function parseDisposal(disposal){
+  const sections={alert_detail:[],analysis:[],recommendation:[]}
+  let current='alert_detail'
+  for(const line of normalizeNewlines(disposal).replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n')){
+    const m=line.trim().match(/^(告警详情|告警分析|处置建议|建议)\s*[：:]\s*(.*)$/)
+    if(m){
+      current=({'告警详情':'alert_detail','告警分析':'analysis','处置建议':'recommendation','建议':'recommendation'})[m[1]]
+      if(m[2].trim())sections[current].push(m[2].trim())
+    }else sections[current].push(line)
+  }
+  return Object.fromEntries(Object.entries(sections).map(([key,lines])=>[key,lines.join('\n').trim()||'未提供']))
+}
 const templatePreview=computed(()=>{
-  const raw=form.value.message_template||''
-  const fields={...exampleAlert,id:'123',month:'202611',received_at:'2026-11-26 09:00:00',
+  const fields={...exampleAlert,...parseDisposal(exampleAlert.disposal),
+    id:'123',month:'202611',received_at:'2026-11-26 09:00:00',
     ticket_link:exampleAlert.ticket_url?'[查看工单]('+exampleAlert.ticket_url+')':''}
-  const rendered=raw.replace(/\\n/g,'\n').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(fields,key)?String(fields[key]):match)
+  const rendered=normalizeNewlines(form.value.message_template||'')
+    .replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(fields,key)?String(fields[key]):match)
   const encoded=new TextEncoder().encode(rendered)
   if(encoded.length<=3000)return rendered
   const suffix='\n……（内容过长，请在 SCC 的 MSOC 日志查看完整内容）'
