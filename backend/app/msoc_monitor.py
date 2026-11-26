@@ -428,6 +428,9 @@ def _format_delivery(row, template=DEFAULT_MESSAGE_TEMPLATE):
     # Do not create clickable links for arbitrary schemes.
     link = "[查看工单](" + url + ")" if url.startswith(("https://", "http://")) else ""
     fields = {key: str(values.get(key) or "") for key in TEMPLATE_FIELDS}
+    # Preserve visibility of unexpected formats without changing their stored JSON.
+    if not fields["disposal"]:
+        fields["disposal"] = str(row["content"])
     fields.update({
         "id": str(row["source_id"]),
         "month": str(row["source_month"]),
@@ -518,7 +521,7 @@ def _poll_once_impl():
     if config.wecom_enabled:
         if not config.wecom_webhook:
             raise RuntimeError("正常推送已启用，但尚未配置企业微信 Webhook")
-        pushed = _send_deliveries(unsent, config.wecom_webhook, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE)
+        pushed = _send_deliveries(unsent, config.wecom_webhook, getattr(config, "message_template", None) or DEFAULT_MESSAGE_TEMPLATE)
 
     counts = _delivery_counts(source_db)
     return {
@@ -681,7 +684,7 @@ def test_normal_push():
             "## MSOC 模板测试（示例数据）\n\n" + _format_delivery({
                 "source_id": 123, "source_month": _now_dt().strftime("%Y%m"),
                 "received_at": _now(), "content": json.dumps(SAMPLE_ALERT, ensure_ascii=False),
-            }, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE),
+            }, getattr(config, "message_template", None) or DEFAULT_MESSAGE_TEMPLATE),
         )
     except Exception as exc:
         raise HTTPException(502, str(exc)[:500])
