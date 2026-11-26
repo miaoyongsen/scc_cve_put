@@ -34,6 +34,7 @@ MAX_MESSAGE_BYTES = 3800
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 ISM_BASE_URL = "https://msocism.ey.com.cn/NimsoftServiceDesk/servicedesk/sso/msocism.ey.com.cn?redirectUrl="
 PREVIOUS_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
+STRUCTURED_PREVIOUS_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n{ticket_link}"
 DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n**Additional information:**\nISM Link: {ticket_link}"
 TEMPLATE_FIELDS = ("ticket_identifier", "priority", "cause", "escalation", "disposal", "alert_detail", "analysis", "recommendation", "ticket_url", "ticket_link", "id", "month", "received_at")
 SAMPLE_ALERT = {
@@ -126,6 +127,8 @@ if "message_template" not in {col["name"] for col in inspect(engine).get_columns
 with engine.begin() as conn:
     conn.execute(text("UPDATE msoc_monitor_config SET message_template=:new WHERE message_template=:old"),
                  {"new": DEFAULT_MESSAGE_TEMPLATE, "old": PREVIOUS_MESSAGE_TEMPLATE})
+    conn.execute(text("UPDATE msoc_monitor_config SET message_template=:new WHERE message_template=:old"),
+                 {"new": DEFAULT_MESSAGE_TEMPLATE, "old": STRUCTURED_PREVIOUS_TEMPLATE})
 
 
 def _now_dt():
