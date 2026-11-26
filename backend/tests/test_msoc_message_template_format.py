@@ -45,3 +45,25 @@ def test_missing_sections_not_fabricated_and_raw_data_still_available():
     assert "**处置建议**\n未提供" in result
     legacy = msoc_monitor._format_delivery(row, "{disposal}")
     assert legacy == "Unstructured vendor alert"
+
+
+def test_ism_ticket_link_uses_identifier_not_untrusted_url():
+    row = _row("告警详情：测试")
+    raw = json.loads(row["content"])
+    raw["ticket_identifier"] = "300-205029"
+    raw["ticket_url"] = "https://untrusted.example/phish"
+    row["content"] = json.dumps(raw, ensure_ascii=False)
+    result = msoc_monitor._format_delivery(row)
+    expected = ("https://msocism.ey.com.cn/NimsoftServiceDesk/servicedesk/sso/"
+                "msocism.ey.com.cn?redirectUrl=%2F%23ticket%2F300-205029")
+    assert "ISM Link: " + expected in result
+    assert "untrusted.example" not in result
+
+    raw["ticket_identifier"] = "300-205030"
+    row["content"] = json.dumps(raw, ensure_ascii=False)
+    assert "%2F%23ticket%2F300-205030" in msoc_monitor._format_delivery(row)
+
+    raw["ticket_identifier"] = "../bad"
+    row["content"] = json.dumps(raw, ensure_ascii=False)
+    assert "ISM Link: " in msoc_monitor._format_delivery(row)
+    assert "redirectUrl=" not in msoc_monitor._format_delivery(row)
