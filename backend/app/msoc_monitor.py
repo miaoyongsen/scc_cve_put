@@ -21,7 +21,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint, Index, select, func
+from sqlalchemy import Boolean, Integer, String, Text, UniqueConstraint, Index, select, func, inspect, text
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from .core import Base, engine, auth
@@ -32,6 +32,8 @@ DEFAULT_DB_PATH = "/home/msocadmin/SCC_TT/data/webhook.db"
 ALLOWED_INTERVALS = (1, 3, 5, 10, 15, 30)
 MAX_MESSAGE_BYTES = 3800
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+DEFAULT_MESSAGE_TEMPLATE = "### 日志 #{id} · {month}\n> **接收时间**：{received_at}\nJSON 原文：\n{content}"
+MSOC_TEMPLATE_FIELDS = ("id", "month", "received_at", "content")
 
 _send_lock = threading.Lock()
 _last_send_started = 0.0
@@ -59,6 +61,7 @@ class MSOCConfig(Base):
     poll_interval: Mapped[int] = mapped_column(Integer, default=3)
     wecom_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     wecom_webhook: Mapped[str] = mapped_column(String(1000), default="")
+    message_template: Mapped[str] = mapped_column(Text, default=DEFAULT_MESSAGE_TEMPLATE)
     error_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     error_webhook: Mapped[str] = mapped_column(String(1000), default="")
     # Retained for compatibility with the first version; no longer used as a cursor.
@@ -95,6 +98,9 @@ class MSOCDelivery(Base):
 
 # Creates the new MSOC delivery table in SCC_CVE's database.
 Base.metadata.create_all(engine)
+if "message_template" not in {c["name"] for c in inspect(engine).get_columns("msoc_monitor_config")}:
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE msoc_monitor_config ADD COLUMN message_template TEXT"))
 
 
 def _now_dt():
@@ -127,6 +133,7 @@ def _config_data(row):
         "poll_interval": row.poll_interval,
         "wecom_enabled": bool(row.wecom_enabled),
         "has_wecom_webhook": bool(row.wecom_webhook),
+        "message_template": row.message_template if row.message_template is not None else DEFAULT_MESSAGE_TEMPLATE,
         "error_enabled": bool(row.error_enabled),
         "has_error_webhook": bool(row.error_webhook),
         "last_query": row.last_query,
@@ -382,29 +389,46 @@ def _capture_records(source_db, records, include_unsent=True):
     return captured, unsent
 
 
-def _format_delivery(row):
+def _normalize_template(value):
+    return str(value or "").replace("\\n", "\n")
+
+
+def _render_template(template, fields):
+    result = _normalize_template(template)
+    for key in MSOC_TEMPLATE_FIELDS:
+        result = result.replace("{" + key + "}", str(fields.get(key, "")))
+    return result
+
+
+def _limit_bytes(value, limit):
+    encoded = value.encode("utf-8")
+    if len(encoded) <= limit:
+        return value
+    suffix = "\n……（内容过长，完整内容请在 MSOC 日志页面查看）"
+    return encoded[:max(0, limit - len(suffix.encode("utf-8")))].decode("utf-8", "ignore") + suffix
+
+
+def _format_delivery(row, template=DEFAULT_MESSAGE_TEMPLATE):
     raw = row["content"]
     try:
         raw = json.dumps(json.loads(raw), ensure_ascii=False, indent=2)
     except Exception:
         raw = str(raw)
-    raw_bytes = raw.encode("utf-8")
-    if len(raw_bytes) > 2100:
-        raw = raw_bytes[:2100].decode("utf-8", "ignore") + "\n……（内容过长，完整内容请在 MSOC 日志页面查看）"
-    return (
-        "### 日志 #" + str(row["source_id"]) + " · " + row["source_month"] + "\n"
-        "> **接收时间**：" + (row["received_at"] or "未知") + "\n"
-        "JSON 原文：\n" + raw
-    )
+    raw = _limit_bytes(raw, 2100)
+    rendered = _render_template(template, {
+        "id": row["source_id"], "month": row["source_month"],
+        "received_at": row["received_at"] or "未知", "content": raw,
+    })
+    return _limit_bytes(rendered, 3000)
 
 
-def _send_deliveries(deliveries, webhook):
+def _send_deliveries(deliveries, webhook, template=DEFAULT_MESSAGE_TEMPLATE):
     """Send only unsent records from this poll's current time window."""
     if not deliveries:
         return 0
     groups, current, current_bytes = [], [], 0
     for row in deliveries:
-        item = _format_delivery(row)
+        item = _format_delivery(row, template)
         item_bytes = len(item.encode("utf-8"))
         if current and (len(current) >= 4 or current_bytes + item_bytes > MAX_MESSAGE_BYTES - 200):
             groups.append(current)
@@ -474,7 +498,7 @@ def _poll_once_impl():
     if config.wecom_enabled:
         if not config.wecom_webhook:
             raise RuntimeError("正常推送已启用，但尚未配置企业微信 Webhook")
-        pushed = _send_deliveries(unsent, config.wecom_webhook)
+        pushed = _send_deliveries(unsent, config.wecom_webhook, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE)
 
     counts = _delivery_counts(source_db)
     return {
@@ -558,6 +582,7 @@ def wake_monitor():
 
 
 class MSOCConfigInput(BaseModel):
+    message_template: str = Field(default=DEFAULT_MESSAGE_TEMPLATE, max_length=8000)
     enabled: bool = False
     db_path: str = Field(default=DEFAULT_DB_PATH, min_length=1, max_length=1000)
     poll_interval: int = 3
@@ -586,6 +611,11 @@ def put_config(body: MSOCConfigInput):
         raise HTTPException(422, "查询间隔仅支持 1、3、5、10、15、30 分钟")
     _validate_webhook(body.wecom_webhook, "正常推送：")
     _validate_webhook(body.error_webhook, "异常告警：")
+    if not body.message_template.strip():
+        raise HTTPException(422, "企业微信推送模板不能为空")
+    unknown = set(re.findall(r"(?<!{){([a-zA-Z_][a-zA-Z0-9_]*)}(?!})", body.message_template)) - set(MSOC_TEMPLATE_FIELDS)
+    if unknown:
+        raise HTTPException(422, "不支持的模板变量：" + ", ".join(sorted(unknown)))
     with Session(engine) as db:
         row = db.get(MSOCConfig, 1)
         if row is None:
@@ -596,6 +626,7 @@ def put_config(body: MSOCConfigInput):
         row.poll_interval = body.poll_interval
         row.wecom_enabled = body.wecom_enabled
         row.error_enabled = body.error_enabled
+        row.message_template = _normalize_template(body.message_template)
         if body.wecom_webhook:
             row.wecom_webhook = body.wecom_webhook
         if body.error_webhook:
@@ -631,7 +662,10 @@ def test_normal_push():
     try:
         _send_markdown(
             config.wecom_webhook,
-            "## MSOC 正常推送测试\n> **状态**：连接成功\n> **时间**：" + _now(),
+            "## MSOC 正常推送测试\n\n" + _format_delivery({
+                "source_id": 123, "source_month": _now_dt().strftime("%Y%m"),
+                "received_at": _now(), "content": '{"disposal":"test","priority":"high"}',
+            }, config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE),
         )
     except Exception as exc:
         raise HTTPException(502, str(exc)[:500])
