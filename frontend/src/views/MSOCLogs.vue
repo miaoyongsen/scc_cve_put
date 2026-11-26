@@ -164,7 +164,7 @@ function reset(){
 async function manualPush(r){
   if(pushingId.value!==null)return
   const target='日志 #'+r.source_id+'（'+r.source_month+'）'
-  if(!window.confirm('确认再次推送 '+target+' 到 MSOC 正常企业微信机器人？\\n历史已发送的日志也会再次发送。'))return
+  if(!window.confirm('确认再次推送 '+target+' 到 MSOC 正常企业微信机器人？\n历史已发送的日志也会再次发送。'))return
   pushingId.value=r.id
   try{
     await api.post('/logs/'+r.source_month+'/'+r.id+'/push')
