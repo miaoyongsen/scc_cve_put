@@ -32,8 +32,9 @@ DEFAULT_DB_PATH = "/home/msocadmin/SCC_TT/data/webhook.db"
 ALLOWED_INTERVALS = (1, 3, 5, 10, 15, 30)
 MAX_MESSAGE_BYTES = 3800
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+ISM_BASE_URL = "https://msocism.ey.com.cn/NimsoftServiceDesk/servicedesk/sso/msocism.ey.com.cn?redirectUrl="
 PREVIOUS_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
-DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n{ticket_link}"
+DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n**Additional information:**\nISM Link: {ticket_link}"
 TEMPLATE_FIELDS = ("ticket_identifier", "priority", "cause", "escalation", "disposal", "alert_detail", "analysis", "recommendation", "ticket_url", "ticket_link", "id", "month", "received_at")
 SAMPLE_ALERT = {
     "escalation": "AWS_Guardduty_Guardduty Findings - 172.24.254.254",
@@ -460,9 +461,12 @@ def _format_delivery(row, template=DEFAULT_MESSAGE_TEMPLATE):
         values = parsed if isinstance(parsed, dict) else {}
     except (ValueError, TypeError):
         values = {}
-    url = str(values.get("ticket_url") or "").strip()
-    # Do not create clickable links for arbitrary schemes.
-    link = "[查看工单](" + url + ")" if url.startswith(("https://", "http://")) else ""
+    ticket = str(values.get("ticket_identifier") or "").strip()
+    # Build the fixed corporate ISM deep link from a validated ticket identifier.
+    # The URL is not taken from untrusted upstream log data.
+    link = ""
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", ticket):
+        link = ISM_BASE_URL + quote("/#ticket/" + ticket, safe="")
     fields = {key: str(values.get(key) or "") for key in TEMPLATE_FIELDS}
     # Preserve visibility of unexpected formats without changing their stored JSON.
     if not fields["disposal"]:
