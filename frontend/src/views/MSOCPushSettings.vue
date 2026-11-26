@@ -63,6 +63,21 @@
       </n-space>
     </n-card>
 
+    <n-card title="企业微信推送模板" style="margin-top:16px">
+      <n-alert type="info" style="margin-bottom:12px">
+        推送内容由此模板控制。可用变量：{ticket_identifier}、{priority}、{cause}、{escalation}、{disposal}、{ticket_url}、{ticket_link}、{id}、{month}、{received_at}。
+        {disposal} 保留原始内容和换行；{ticket_link} 在工单 URL 为空时不显示。仅影响后续新推送，不补推历史日志。
+      </n-alert>
+      <n-input v-model:value="form.message_template" type="textarea" :rows="12" maxlength="8000" show-count placeholder="输入 Markdown 模板"/>
+      <n-space style="margin-top:12px">
+        <n-button type="primary" :loading="saving" @click="save">保存推送模板</n-button>
+        <n-button @click="resetTemplate">恢复默认模板（需保存）</n-button>
+        <n-button :loading="testing" @click="testNormal">发送模板测试消息</n-button>
+      </n-space>
+      <h3>实时预览（示例 JSON）</h3>
+      <pre class="template-preview">{{ templatePreview }}</pre>
+    </n-card>
+
     <n-card title="异常告警机器人" style="margin-top:16px">
       <n-alert type="warning" style="margin-bottom:12px">
         数据库不可访问、查询失败、正常推送失败时，使用此独立机器人发送异常告警。同一异常 15 分钟内最多告警一次，避免故障时刷屏。
@@ -105,7 +120,7 @@
 </template>
 
 <script setup>
-import {ref,onMounted,onUnmounted} from 'vue'
+import {ref,computed,onMounted,onUnmounted} from 'vue'
 import axios from 'axios'
 import {
   NAlert,NButton,NCard,NDescriptions,NDescriptionsItem,NFormItem,NGrid,NGridItem,
@@ -119,6 +134,19 @@ api.interceptors.request.use(c=>{
   return c
 })
 
+const defaultMessageTemplate="## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
+const exampleAlert={
+  escalation:'AWS_Guardduty_Guardduty Findings - 172.24.254.254',
+  cause:'Escalated',priority:'Medium',ticket_url:'',ticket_identifier:'300-205029',
+  disposal:'告警详情：\n告警标题：An EC2 instance is communicating with a remote host on an unusual server port.\n源地址IP：172.24.254.245\n远程IP：39.96.62.230\n\n告警分析：\nGuardDuty 检测到异常端口通信。\n\n建议：\n请确认该通信是否为授权操作。'
+}
+const templatePreview=computed(()=>{
+  const raw=form.value.message_template||''
+  const fields={...exampleAlert,id:'123',month:'202611',received_at:'2026-11-26 09:00:00',
+    ticket_link:exampleAlert.ticket_url?'[查看工单]('+exampleAlert.ticket_url+')':''}
+  return raw.replace(/\\n/g,'\n').replace(/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/g,(match,key)=>Object.prototype.hasOwnProperty.call(fields,key)?String(fields[key]):match)
+})
+function resetTemplate(){form.value.message_template=defaultMessageTemplate}
 const saving=ref(false)
 const testing=ref(false)
 const testingError=ref(false)
@@ -133,6 +161,7 @@ const form=ref({
   poll_interval:3,
   wecom_enabled:false,
   wecom_webhook:'',
+  message_template:defaultMessageTemplate,
   error_enabled:false,
   error_webhook:''
 })
@@ -249,5 +278,5 @@ onUnmounted(()=>{
 </script>
 
 <style scoped>
-.page{max-width:1050px;margin:30px auto;padding:20px}
+.page{max-width:1050px;margin:30px auto;padding:20px}.template-preview{white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7fa;padding:16px;border-radius:6px;max-height:430px;overflow:auto}
 </style>
