@@ -104,6 +104,19 @@ class MSOCDelivery(Base):
 
 
 # Creates the new MSOC delivery table in SCC_CVE's database.
+class MSOCManualPush(Base):
+    """Audit every manual WeCom resend independently of automatic delivery history."""
+    __tablename__ = "msoc_manual_push_records"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    delivery_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    source_month: Mapped[str] = mapped_column(String(6), nullable=False)
+    source_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="发送中")
+    attempted_at: Mapped[str] = mapped_column(String(40), default="")
+    sent_at: Mapped[str] = mapped_column(String(40), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+
+
 Base.metadata.create_all(engine)
 if "message_template" not in {col["name"] for col in inspect(engine).get_columns("msoc_monitor_config")}:
     with engine.begin() as conn:
@@ -899,6 +912,68 @@ def list_logs(
             "list": data,
         },
     }
+
+
+_manual_push_lock = threading.Lock()
+
+
+@router.post("/logs/{month}/{record_id}/push")
+def manually_push_log(month: str, record_id: int):
+    """Explicit operator action: send one saved log even if previously sent."""
+    if not re.fullmatch(r"20\\d{4}", month):
+        raise HTTPException(422, "月份格式应为 YYYYMM")
+    if not _manual_push_lock.acquire(blocking=False):
+        raise HTTPException(409, "另一条手动推送正在执行，请稍后再试")
+    try:
+        config = _config()
+        if not config.wecom_webhook:
+            raise HTTPException(422, "请先在 MSOC 推送配置中保存正常推送机器人 Webhook")
+        source_db = _canonical_db_path(config.db_path)
+        with Session(engine) as db:
+            row = db.scalar(select(MSOCDelivery).where(
+                MSOCDelivery.id == record_id,
+                MSOCDelivery.source_db == source_db,
+                MSOCDelivery.source_month == month,
+            ))
+            if row is None:
+                raise HTTPException(404, "MSOC 日志不存在")
+            entry = {"source_id": row.source_id, "source_month": row.source_month,
+                     "received_at": row.received_at, "content": row.content}
+            audit = MSOCManualPush(delivery_id=row.id, source_month=row.source_month,
+                                   source_id=row.source_id, status="发送中",
+                                   attempted_at=_now())
+            db.add(audit)
+            db.commit()
+            audit_id = audit.id
+        template = config.message_template if config.message_template is not None else DEFAULT_MESSAGE_TEMPLATE
+        content = _format_delivery(entry, template)
+        try:
+            _send_markdown(config.wecom_webhook, content)
+        except Exception as exc:
+            with Session(engine) as db:
+                audit = db.get(MSOCManualPush, audit_id)
+                audit.status = "失败"
+                audit.error = str(exc)[:2000]
+                db.commit()
+            raise HTTPException(502, "手动推送失败：" + str(exc)[:300])
+
+        sent_at = _now()
+        with Session(engine) as db:
+            audit = db.get(MSOCManualPush, audit_id)
+            audit.status = "成功"
+            audit.sent_at = sent_at
+            # A successful manual push can resolve a previously unsent record;
+            # it must not overwrite the original sent time of older deliveries.
+            row = db.get(MSOCDelivery, record_id)
+            if row is not None and row.source_db == source_db and row.source_month == month:
+                if not row.sent:
+                    row.sent = True
+                    row.sent_at = sent_at
+                    row.last_error = ""
+            db.commit()
+        return {"code": 0, "data": {"success": True, "sent_at": sent_at}}
+    finally:
+        _manual_push_lock.release()
 
 
 @router.get("/logs/{month}/{record_id}")
