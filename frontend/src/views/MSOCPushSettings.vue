@@ -144,7 +144,7 @@ const exporting=ref(false)
 const defaultTemplate='### 日志 #{id} · {month}\n> **接收时间**：{received_at}\nJSON 原文：\n{content}'
 const templatePreview=computed(()=>{
   const sample={id:'123',month:'202611',received_at:'2026-11-26T09:00:00+08:00',content:'{"disposal":"处理中","priority":"high","ticket_identifier":"MSOC-123"}'}
-  let result=String(form.value.message_template||'').replace(/\\\\n/g,'\n')
+  let result=String(form.value.message_template||'').replace(/\\n/g,'\n')
   for(const [key,val] of Object.entries(sample))result=result.split('{'+key+'}').join(val)
   return result
 })
