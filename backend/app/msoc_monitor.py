@@ -32,8 +32,9 @@ DEFAULT_DB_PATH = "/home/msocadmin/SCC_TT/data/webhook.db"
 ALLOWED_INTERVALS = (1, 3, 5, 10, 15, 30)
 MAX_MESSAGE_BYTES = 3800
 SHANGHAI = ZoneInfo("Asia/Shanghai")
-DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
-TEMPLATE_FIELDS = ("ticket_identifier", "priority", "cause", "escalation", "disposal", "ticket_url", "ticket_link", "id", "month", "received_at")
+PREVIOUS_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n{disposal}\n\n{ticket_link}"
+DEFAULT_MESSAGE_TEMPLATE = "## MSOC 安全告警通知\n> **工单编号**：{ticket_identifier}\n> **告警等级**：<font color=\"warning\">{priority}</font>\n> **告警状态**：{cause}\n> **告警类型**：{escalation}\n\n**告警详情**\n{alert_detail}\n\n**告警分析**\n{analysis}\n\n**处置建议**\n{recommendation}\n\n{ticket_link}"
+TEMPLATE_FIELDS = ("ticket_identifier", "priority", "cause", "escalation", "disposal", "alert_detail", "analysis", "recommendation", "ticket_url", "ticket_link", "id", "month", "received_at")
 SAMPLE_ALERT = {
     "escalation": "AWS_Guardduty_Guardduty Findings - 172.24.254.254",
     "cause": "Escalated", "priority": "Medium", "ticket_url": "",
@@ -107,6 +108,10 @@ Base.metadata.create_all(engine)
 if "message_template" not in {col["name"] for col in inspect(engine).get_columns("msoc_monitor_config")}:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE msoc_monitor_config ADD COLUMN message_template TEXT"))
+# Only replace the old built-in template. Never overwrite an administrator's customized template.
+with engine.begin() as conn:
+    conn.execute(text("UPDATE msoc_monitor_config SET message_template=:new WHERE message_template=:old"),
+                 {"new": DEFAULT_MESSAGE_TEMPLATE, "old": PREVIOUS_MESSAGE_TEMPLATE})
 
 
 def _now_dt():
@@ -397,7 +402,7 @@ def _capture_records(source_db, records, include_unsent=True):
 
 def _normalize_template(value):
     # Convert templates written with a literal backslash-n to line breaks.
-    return str(value).replace("\\n", "\n")
+    return re.sub(r"\\+n", "\n", str(value))
 
 
 def _validate_template(value):
@@ -407,6 +412,24 @@ def _validate_template(value):
     if unknown:
         raise HTTPException(422, "模板存在不支持的变量：" + ", ".join(sorted(unknown)))
     return _normalize_template(value)
+
+
+def _parse_disposal(disposal):
+    """Split recognizable vendor-freeform sections without fabricating facts."""
+    value=_normalize_template(disposal).replace("\r\n","\n").replace("\r","\n")
+    segments={"alert_detail":[],"analysis":[],"recommendation":[]}
+    section="alert_detail"
+    for line in value.split("\n"):
+        stripped=line.strip()
+        marker=re.match(r"^(告警详情|告警分析|处置建议|建议)\s*[：:]\s*(.*)$",stripped)
+        if marker:
+            section={"告警详情":"alert_detail","告警分析":"analysis",
+                     "处置建议":"recommendation","建议":"recommendation"}[marker.group(1)]
+            if marker.group(2).strip():
+                segments[section].append(marker.group(2).strip())
+        else:
+            segments[section].append(line)
+    return {key:"\n".join(lines).strip() or "未提供" for key,lines in segments.items()}
 
 
 def _cut_bytes(value, size):
@@ -437,6 +460,7 @@ def _format_delivery(row, template=DEFAULT_MESSAGE_TEMPLATE):
         "received_at": str(row["received_at"] or "未知"),
         "ticket_link": link,
     })
+    fields.update(_parse_disposal(fields["disposal"]))
     # The original JSON is still stored intact in msoc_delivery_records.
     # Replacement does not recursively interpret braces from source data.
     result = _normalize_template(template)
@@ -681,7 +705,7 @@ def test_normal_push():
     try:
         _send_markdown(
             config.wecom_webhook,
-            "## MSOC 模板测试（示例数据）\n\n" + _format_delivery({
+            _format_delivery({
                 "source_id": 123, "source_month": _now_dt().strftime("%Y%m"),
                 "received_at": _now(), "content": json.dumps(SAMPLE_ALERT, ensure_ascii=False),
             }, getattr(config, "message_template", None) or DEFAULT_MESSAGE_TEMPLATE),
